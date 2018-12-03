@@ -70,10 +70,7 @@ def vary_sample_size(config):
 
     config.L = 4
     config.exact_cg = True
-<<<<<<< HEAD
     config.filepath_names()
-=======
->>>>>>> 4de169174233b14ed695ed23dc4742f67bdadf4a
 
     rand_sample_size = 1.0/np.square(np.linspace(1.0/np.sqrt(5.0e6), 1.0/np.sqrt(5.0e4), num=30))
     sample_size_list = []
@@ -89,11 +86,7 @@ def vary_sample_size(config):
         sample_size_list.append(deep_conv.numdat)
         print("Sample size is:", deep_conv.numdat)
         print()
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> 4de169174233b14ed695ed23dc4742f67bdadf4a
         deep_conv.run_model(config)
         deep_conv.compute_metrics()
         deep_conv.print_metrics()
