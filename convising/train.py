@@ -206,7 +206,8 @@ class ConvIsing:
         K.clear_session()
         activation_fcn = 'elu'
         kninit = 'glorot_normal'
-        self.model_energy, self.model = mod.deep_conv_ising(config, activation_fcn, kninit)
+        self.model_energy = mod.deep_conv_e(config, activation_fcn, kninit)
+        self.model = mod.deep_conv_e_diff(config, self.model_energy)
 
     def run_model(self, config):
         self.model.compile(loss="mse", optimizer="Nadam")

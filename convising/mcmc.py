@@ -8,7 +8,24 @@ import matplotlib.pyplot as plt
 # wgt = [' [', pb.Timer(), '] ', pb.Bar(marker='█'), ' ', pb.Counter(), ' (', pb.Percentage(), ')', ' [', pb.AdaptiveETA(), '] ']
 
 
-def metropolis_par(model, tn, nsample, ss0, is_traj=False):
+def metropolis_par(ediff_fun, tn, nsample, ss0, is_traj=False):
+    """Run parallel metropolis chains
+
+    Args:
+        ediff_fun: Function which takes two lists of configurations and
+            computes exp(-beta*(E2 - E1)) for each pair
+        tn (int): Number of ``sweeps'', i.e. the number of proposed flips
+        nsample (int): Interval at which to collect samples if is_traj=True
+        ss0:  numpy array of shape (L^2,) or (nchains, L^2) to initalize with;
+            L^2 is the number of spins in a configuration and nchains is the
+            number of parallel metropolis chains to run
+        is_traj (bool): Record the sample every nsample sweeps.
+            Defaults to False.
+
+    Returns:
+        (final configuration, trajectory, acceptance ratio)
+
+    """
 
     if np.array(ss0).ndim == 1:
         ss0 = np.array([ss0])
@@ -31,7 +48,7 @@ def metropolis_par(model, tn, nsample, ss0, is_traj=False):
         prop_ss = np.copy(ss)
         prop_ss[range(nchains), ssidx] *= -1
 
-        energy_diff = model.predict([ss.reshape((-1,L,L)), prop_ss.reshape((-1,L,L))]).reshape((nchains))
+        energy_diff = ediff_fun([ss.reshape((-1,L,L)), prop_ss.reshape((-1,L,L))]).reshape((nchains))
         flipidx = np.random.random(nchains) < energy_diff
 
         accept_count += np.count_nonzero(flipidx)
@@ -47,17 +64,17 @@ def metropolis_par(model, tn, nsample, ss0, is_traj=False):
     return (ss, ss_traj, accept_count / (tn * nchains))
 
 
-def gen_samples(model, tn, nsample, ss0, nburn):
+def gen_samples(ediff_fun, tn, nsample, ss0, nburn):
 
     print()
     print("Burning phase")
-    outobj_burn = metropolis_par(model, nburn, nsample, ss0, is_traj=False)
+    outobj_burn = metropolis_par(ediff_fun, nburn, nsample, ss0, is_traj=False)
     print()
     print("Acceptance rate:", outobj_burn[2])
     print()
 
     print("Running phase")
-    outobj_run = metropolis_par(model, tn, nsample, outobj_burn[0], is_traj=True)
+    outobj_run = metropolis_par(ediff_fun, tn, nsample, outobj_burn[0], is_traj=True)
     print()
     print("Acceptance rate:", outobj_run[2])
     print()
