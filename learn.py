@@ -11,7 +11,7 @@ def run():
 
     config = tr.Config()
     config.L = 8
-    config.filepath_names()
+    config.refresh_config()
     deep_conv = tr.ConvIsing(config)
 
     deep_conv.create_dataset(config)
@@ -70,7 +70,7 @@ def vary_sample_size(config):
 
     config.L = 4
     config.exact_cg = True
-    config.filepath_names()
+    config.refresh_config()
 
     rand_sample_size = 1.0/np.square(np.linspace(1.0/np.sqrt(5.0e6), 1.0/np.sqrt(5.0e4), num=30))
     sample_size_list = []

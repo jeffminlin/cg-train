@@ -43,7 +43,6 @@ class Config:
         self.beta = .4406868
         self.cg_method = "deci"
         self.cg_factor = 2
-        self.cgL = int(self.L/self.cg_factor)
 
         self.keep = 1.0
         self.train_split = 9./10.
@@ -60,9 +59,11 @@ class Config:
         self.dense_nodes = [40, 40]
         self.nfsym = "none"
 
-        self.filepath_names()
+        self.refresh_config()
 
-    def filepath_names(self):
+    def refresh_config(self):
+        self.cgL = int(self.L/self.cg_factor)
+
         self.filepath = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor)]).format(self.L, self.beta)
         self.weightfile = "".join(["./weights/", self.filepath, ".hdf5"])
         self.lossfile = "".join(["./figs/loss", self.filepath, ".png"])
