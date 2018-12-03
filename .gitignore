@@ -1,3 +1,5 @@
 *.pyc
 obs.txt
 data/*
+*.sh
+slurm_out/*
