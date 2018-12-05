@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from keras.utils import plot_model
 
 import convising.train as tr
 import convising.mcmc as mc
@@ -32,9 +33,9 @@ def compute_iac(deep_conv, config):
     print("Integrated autocorrelation, kappa =", kappa, ":", IAC)
 
 
-def compare_observables(deep_conv, config):
+def compare_observables(deep_conv, config, num_samples, num_chains, skip):
 
-    ss_traj = mc.gen_samples(deep_conv.model.predict, int(1e5), 100, np.random.choice([-1,1], size=(1000,config.cgL*config.cgL)), 5000)
+    ss_traj = mc.gen_samples(deep_conv.model.predict, int(num_samples*skip/num_chains), skip, np.random.choice([-1,1], size=(num_chains,config.cgL*config.cgL)), 5000)
     obs_model = mc.Observables(ss_traj.reshape([-1,config.cgL,config.cgL]))
     obs_samples = mc.Observables(np.loadtxt(config.imagefile).reshape([-1,config.L,config.L])[:,0::config.cg_factor,0::config.cg_factor])
 
@@ -72,7 +73,7 @@ def vary_sample_size(config):
     config.exact_cg = True
     config.refresh_config()
 
-    rand_sample_size = 1.0/np.square(np.linspace(1.0/np.sqrt(5.0e6), 1.0/np.sqrt(5.0e4), num=30))
+    rand_sample_size = 5.0 * np.power(10.0, np.linspace(6.0, 4.0, num=30))
     sample_size_list = []
     test_mse_list = []
     test_cg_mse_list = []
@@ -96,23 +97,42 @@ def vary_sample_size(config):
     plt.figure(1)
     plt.xscale('log')
     plt.yscale('log')
-    plt.xlabel("1/sqrt(sample size)")
+    plt.xlabel("sample size")
     plt.ylabel("Test MSE against CG labels")
-    plt.plot(1.0/np.sqrt(sample_size_list), test_cg_mse_list, '.')
-    plt.savefig("./figs/ising_sample_size_vs_CG_loss.png", bbox_inches="tight")
+    plt.plot(sample_size_list, test_cg_mse_list, '.')
+    plt.savefig("./figs/L4_ising_sample_size_vs_CG_loss.png", bbox_inches="tight")
     plt.figure(2)
     plt.xscale('log')
     plt.yscale('log')
-    plt.xlabel("1/sqrt(sample size)")
+    plt.xlabel("sample size")
     plt.ylabel("Test MSE against instantaneous labels")
-    plt.plot(1.0/np.sqrt(sample_size_list), test_mse_list, '.')
-    plt.savefig("./figs/ising_sample_size_vs_noisy_loss.png", bbox_inches="tight")
+    plt.plot(sample_size_list, test_mse_list, '.')
+    plt.savefig("./figs/L4_ising_sample_size_vs_noisy_loss.png", bbox_inches="tight")
 
 
 def main():
 
     config = tr.Config()
-    vary_sample_size(config)
+    config.L = 4
+    config.refresh_config()
+    deep_conv = tr.ConvIsing(config)
+    deep_conv.reload_weights(config)
+
+    compare_observables(deep_conv, config, 1e6, 1000, 100)
+
+    config.L = 8
+    config.refresh_config()
+    deep_conv = tr.ConvIsing(config)
+    deep_conv.reload_weights(config)
+
+    compare_observables(deep_conv, config, 1e6, 1000, 100)
+
+    config.L = 16
+    config.refresh_config()
+    deep_conv = tr.ConvIsing(config)
+    deep_conv.reload_weights(config)
+
+    compare_observables(deep_conv, config, 1e6, 1000, 1000)
 
 
 if __name__ == '__main__':

@@ -32,14 +32,14 @@ def deep_conv_e(config, activation_fcn, kninit):
             M_fc = Dense(nodenum, activation=activation_fcn, use_bias=False, kernel_initializer=kninit)(M_fc)
     else:
         M_fc = Dense(config.dense_nodes[0], activation=activation_fcn, use_bias=True, kernel_initializer=kninit)(M_conv)
-    M_sum = Lambda(lambda x: K.sum(x,axis=[1,2]), name='filter_e')(M_fc)
+    M_sum = Lambda(lambda x: K.sum(x,axis=[1,2]), name='sum_over_spins')(M_fc)
     M_lincomb = Dense(1, activation='linear', use_bias=False, kernel_initializer=kninit)(M_sum)
     model_energy = Model(inputs=M_in, outputs=M_lincomb)
 
     return model_energy
 
 
-def deep_conv_e_diff(config, model_energy):
+def model_e_diff(config, model_energy):
 
     M_in_concat = [Input(shape=(None,None)),Input(shape=(None,None))]
     M_energy_diff = Subtract(name='energy_diff')([model_energy(M_in_concat[1]), model_energy(M_in_concat[0])])

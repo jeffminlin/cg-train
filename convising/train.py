@@ -85,7 +85,7 @@ def coarse_grain(L, beta, cg_method, cgf, image):
     # cgflipidx = np.random.randint(cgL, size=(2, numdat))
     flipidx = cgflipidx*cgf
     exp_ediff = cg_ediff(L, beta, cg_method, cgf, image, flipidx)
-    cgimage,cgimageflip = cg_imageflip(L, cg_method, cgf, image, cgflipidx)
+    cgimage, cgimageflip = cg_imageflip(L, cg_method, cgf, image, cgflipidx)
 
     return ([cgimage, cgimageflip], exp_ediff)
 
@@ -99,8 +99,19 @@ def cg_ediff(L, beta, cg_method, cgf, image, flipidx):
             np.sum([image[tuple(np.insert((flipidx + shift)%[[L],[L]], 0, range(numdat), axis=0))] for shift in addidx], axis=0))
     elif cg_method == "maj":
         ediff = 2 * np.sum(
-            [image[np.insert(tuple((flipidx + [[blkshift],[shift]])%[[L],[L]], 0, range(numdat), axis=0))] * image[tuple(np.insert(flipidx + [[blkshift-1],[shift]]%[[L],[L]], 0, range(numdat), axis=0))]
-            + image[tuple(np.insert((flipidx + [[shift],[blkshift]])%[[L],[L]], 0, range(numdat), axis=0))] * image[tuple(np.insert((flipidx + [[shift-1],[blkshift]])%[[L],[L]], 0, range(numdat), axis=0))] for blkshift in [0,cgf] for shift in range(cgf)], axis=0)
+            [image[tuple(np.insert(
+                (flipidx + np.array([[blkshift],[shift]]))%[[L],[L]],
+                0, range(numdat), axis=0))]
+            * image[tuple(np.insert(
+                (flipidx + np.array([[blkshift-1],[shift]]))%[[L],[L]],
+                0, range(numdat), axis=0))]
+            + image[tuple(np.insert(
+                (flipidx + np.array([[shift],[blkshift]]))%[[L],[L]],
+                0, range(numdat), axis=0))]
+            * image[tuple(np.insert(
+                (flipidx + np.array([[shift-1],[blkshift]]))%[[L],[L]],
+                0, range(numdat), axis=0))]
+            for blkshift in [0,cgf] for shift in range(cgf)], axis=0)
 
     exp_ediff = np.exp(-beta*ediff)
 
@@ -113,7 +124,9 @@ def cg_imageflip(L, cg_method, cgf, image, cgflipidx):
     cgimage = image[:,0::cgf,0::cgf]
     if cg_method == "maj":
         for cgidx,_ in np.ndenumerate(cgimage[0]):
-            cgimage[(slice(None),*cgidx)] = np.sign(np.sum(image[:,cgidx[0]*cgf:(cgidx[0] + 1)*cgf,cgidx[1]*cgf:(cgidx[1] + 1)*cgf], axis=(1,2)))
+            cgimage[(slice(None), *cgidx)] = np.sign(np.sum(
+                image[:, (cgidx[0] * cgf):((cgidx[0] + 1) * cgf),
+                (cgidx[1] * cgf):((cgidx[1] + 1) * cgf)], axis=(1,2)))
         ss_zero_idx = (cgimage == 0)
         nnz = np.count_nonzero(ss_zero_idx)
         rand_ss = np.random.choice([-1,1], nnz)
@@ -208,7 +221,7 @@ class ConvIsing:
         activation_fcn = 'elu'
         kninit = 'glorot_normal'
         self.model_energy = mod.deep_conv_e(config, activation_fcn, kninit)
-        self.model = mod.deep_conv_e_diff(config, self.model_energy)
+        self.model = mod.model_e_diff(config, self.model_energy)
 
     def run_model(self, config):
         self.model.compile(loss="mse", optimizer="Nadam")
