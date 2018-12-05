@@ -172,6 +172,7 @@ class Observables:
         print("Second nn interaction (per spin):", self.avg_second_nearest)
         print("Variance of second nn interaction (per spin):", self.var_second_nearest)
         print("Standard error, second nn:", np.sqrt(self.var_second_nearest/num_samples))
+        print()
         print("Four spin interaction (per spin):", self.avg_four_spins)
         print("Variance of four spin interaction (per spin):", self.var_four_spins)
         print("Standard error, four spin:", np.sqrt(self.var_four_spins/num_samples))

@@ -24,8 +24,8 @@ def run():
 
 def compute_iac(deep_conv, config):
 
-    ss_traj = mc.gen_samples(deep_conv.model.predict, int(1e4), 1, np.random.choice([-1,1], size=(100,config.cgL*config.cgL)), 5000)
-    e_traj = deep_conv.model_energy.predict(ss_traj.reshape([-1,config.cgL,config.cgL])).ravel()
+    ss_traj = mc.gen_samples(deep_conv.model.predict, int(1e4), 1, np.random.choice([-1, 1], size=(100, config.cgL*config.cgL)), 5000)
+    e_traj = deep_conv.model_energy.predict(ss_traj.reshape([-1, config.cgL, config.cgL])).ravel()
 
     kappa = 250
     plotname = "".join(["./figs/autocorr", config.filepath, ".png"])
@@ -35,9 +35,9 @@ def compute_iac(deep_conv, config):
 
 def compare_observables(deep_conv, config, num_samples, num_chains, skip):
 
-    ss_traj = mc.gen_samples(deep_conv.model.predict, int(num_samples*skip/num_chains), skip, np.random.choice([-1,1], size=(num_chains,config.cgL*config.cgL)), 5000)
-    obs_model = mc.Observables(ss_traj.reshape([-1,config.cgL,config.cgL]))
-    obs_samples = mc.Observables(np.loadtxt(config.imagefile).reshape([-1,config.L,config.L])[:,0::config.cg_factor,0::config.cg_factor])
+    ss_traj = mc.gen_samples(deep_conv.model.predict, int(num_samples*skip/num_chains), skip, np.random.choice([-1, 1], size=(num_chains, config.cgL*config.cgL)), 5000)
+    obs_model = mc.Observables(ss_traj.reshape([-1, config.cgL, config.cgL]))
+    obs_samples = mc.Observables(np.loadtxt(config.imagefile).reshape([-1, config.L, config.L])[:, 0::config.cg_factor, 0::config.cg_factor])
 
     print()
     print("Samples generated using learned model")
@@ -48,7 +48,7 @@ def compare_observables(deep_conv, config, num_samples, num_chains, skip):
 
 def project_model(deep_conv, config):
 
-    samples = np.loadtxt(config.imagefile).reshape([-1,config.L,config.L])[:,0::config.cg_factor,0::config.cg_factor]
+    samples = np.loadtxt(config.imagefile).reshape([-1, config.L, config.L])[:, 0::config.cg_factor, 0::config.cg_factor]
     obs = mc.Observables(samples)
     e_traj = deep_conv.model_energy.predict(samples)
     projection = np.linalg.lstsq(obs.numspins * np.column_stack((np.ones(len(samples)), obs.first_nearest, obs.second_nearest, obs.four_spins)), e_traj, rcond=None)
@@ -126,13 +126,6 @@ def main():
     deep_conv.reload_weights(config)
 
     compare_observables(deep_conv, config, 1e6, 1000, 100)
-
-    config.L = 16
-    config.refresh_config()
-    deep_conv = tr.ConvIsing(config)
-    deep_conv.reload_weights(config)
-
-    compare_observables(deep_conv, config, 1e6, 1000, 1000)
 
 
 if __name__ == '__main__':

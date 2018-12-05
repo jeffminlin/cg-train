@@ -31,11 +31,11 @@ def test_cg_deci():
         config.cg_factor,
         test_images)
     deci_test_images = np.array([[[ 1,  1],
-                                 [ 1,  1]],
-                                [[-1,  1],
-                                 [-1,  1]],
-                                [[-1, -1],
-                                 [-1, -1]]])
+                                  [ 1,  1]],
+                                 [[-1,  1],
+                                  [-1,  1]],
+                                 [[-1, -1],
+                                  [-1, -1]]])
 
     assert np.array_equal(deci_test_images, test_cg)
 
