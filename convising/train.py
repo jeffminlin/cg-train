@@ -32,6 +32,8 @@ class Config:
         exact_cg (bool): Whether or not to use any data on exact cg values
         w_size (int): Filter window size, odd if nfsym = 'all' or 'z2'
         alpha (int): Number of filters
+        conv_activ (str): Choice of activation function on the
+            convolutional layer, either 'linear' or 'log_cosh'
         dense_nodes (int): List of integers describing the number of nodes in
                 each dense layer
         nfsym (str): Symmetries to enforce, can be 'none', 'z2', 'd4', or 'all'
@@ -56,6 +58,7 @@ class Config:
 
         self.w_size = 3
         self.alpha = 4
+        self.conv_activ = 'linear'
         self.dense_nodes = [40, 40]
         self.nfsym = "none"
 
@@ -64,10 +67,9 @@ class Config:
     def refresh_config(self):
         self.cgL = int(self.L/self.cg_factor)
 
-        self.filepath = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor), "nf", self.nfsym]).format(self.L, self.beta)
+        self.filepath = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), "conv", self.conv_activ, "_", *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor), "nf", self.nfsym]).format(self.L, self.beta)
         self.weightfile = "".join(["./weights/", self.filepath, ".h5"])
         self.lossfile = "".join(["./figs/loss", self.filepath, ".png"])
-
 
         self.imagefile = "./data/ssL{0:d}b{1:.4e}.dat".format(self.L, self.beta)
         self.efile = "./data/EL{0:d}b{1:.4e}.dat".format(self.L, self.beta)
@@ -218,9 +220,10 @@ class ConvIsing:
 
     def create_model(self, config):
         K.clear_session()
-        activation_fcn = 'elu'
+        conv_activ = config.conv_activ
+        activ_fcn = 'elu'
         kninit = 'glorot_normal'
-        self.model_energy = mod.deep_conv_e(config, activation_fcn, kninit)
+        self.model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
         self.model = mod.model_e_diff(config, self.model_energy)
 
     def run_model(self, config):

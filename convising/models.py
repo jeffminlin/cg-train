@@ -8,11 +8,17 @@ from keras import backend as K
 import convising.layers as lys
 
 
-def deep_conv_e(config, activation_fcn, kninit):
+def log_cosh(x):
+
+    return K.log((K.exp(x) + K.exp(-x))/2.0)
+
+
+def deep_conv_e(config, conv_activ, activation_fcn, kninit):
     """RBM with additional dense layers
 
     Args:
         config (Config): Configuration as defined in convising.train
+        conv_activ: Activation function to use on the convolutional layer
         activation_fcn: Activation function to use on the dense layers
         kninit: Initializer for the kernel weights matrix
 
@@ -23,7 +29,10 @@ def deep_conv_e(config, activation_fcn, kninit):
 
     M_in = Input(shape=(None,None))
     M_pad = lys.PeriodicPad2D(name='pad', pad_size=config.w_size-1)(M_in)
-    M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size,config.w_size], strides=(1,1), activation='linear', padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
+    if config.conv_activ == 'log_cosh':
+        M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size,config.w_size], strides=(1,1), activation=log_cosh, padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
+    else:
+        M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size,config.w_size], strides=(1,1), activation=config.conv_activ, padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
     if config.nfsym == 'z2' or config.nfsym == 'all':
         M_conv = Lambda(lambda x: K.expand_dims(x[0])*x[1])([M_in,M_conv])
     if len(config.dense_nodes) > 1:
