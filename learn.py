@@ -14,6 +14,7 @@ def run():
     config.L = 4
     config.conv_activ = 'log_cosh'
     config.exact_cg = True
+    config.keep = 0.1
     config.verb = 1
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)
@@ -115,17 +116,7 @@ def vary_sample_size(config):
 
 def main():
 
-    config = tr.Config()
-    config.L = 8
-    config.conv_activ = 'log_cosh'
-    config.refresh_config()
-    deep_conv = tr.ConvIsing(config)
-    deep_conv.create_dataset(config)
-    deep_conv.run_model(config)
-    deep_conv.compute_metrics()
-    deep_conv.print_metrics()
-
-    compare_observables(deep_conv, config, 1e6, 1000, 100)
+    run()
 
 
 if __name__ == '__main__':

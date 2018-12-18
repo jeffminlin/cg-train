@@ -1,4 +1,6 @@
+"""Module for training"""
 import numpy as np
+import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -6,6 +8,7 @@ import matplotlib.pyplot as plt
 from keras import optimizers, regularizers
 from keras.engine.topology import Layer
 from keras import backend as K
+from keras.utils import Sequence
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 
 import convising.models as mod
@@ -71,11 +74,9 @@ class Config:
         self.weightfile = "".join(["./weights/", self.filepath, ".h5"])
         self.lossfile = "".join(["./figs/loss", self.filepath, ".png"])
 
-        self.imagefile = "./data/ssL{0:d}b{1:.4e}.dat".format(self.L, self.beta)
-        self.efile = "./data/EL{0:d}b{1:.4e}.dat".format(self.L, self.beta)
+        self.datafile = "./data/L{0:d}b{1:.4e}.h5".format(self.L, self.beta)
 
-        self.cgref_imagefile = "".join(["./data/ssL{0:d}b{1:.4e}_cg", self.cg_method, str(self.cg_factor), ".dat"]).format(self.cgL, self.beta)
-        self.cgref_efile = "".join(["./data/EL{0:d}b{1:.4e}_cg", self.cg_method, str(self.cg_factor), ".dat"]).format(self.cgL, self.beta)
+        self.cgref_datafile = "".join(["./data/L{0:d}b{1:.4e}_cg", self.cg_method, str(self.cg_factor), ".h5"]).format(self.cgL, self.beta)
 
 
 def coarse_grain(L, beta, cg_method, cgf, image):
@@ -148,6 +149,54 @@ def lookup_cg_e(L, beta, cgf, cgimage, cgref_ss, cgref_e):
     return cg_e
 
 
+class CGGeneratorIsing(Sequence):
+    """Class for feeding data to the fit_generator method of a Keras model.
+
+    Args:
+        config (Config): Configuration class
+        set (str): Whether to give training ("train"), validation ("val"),
+            or testing ("test") samples
+
+    """
+
+    def __init__(self, dset, config, set="test"):
+        self.L = config.L
+        self.beta = config.beta
+        self.cg_method = config.cg_method
+        self.cgf = config.cg_factor
+        self.imagearray = dset["images"]
+
+        numdat = int(len(self.imagearray)*config.keep)
+        num_train = int(numdat*config.train_split*(1 - config.val_split))
+        num_val = int(numdat*config.train_split*config.val_split)
+        num_test = numdat - num_train - num_val
+        if set == "train":
+            self.indexes = np.arange(num_train)
+        elif set == "val":
+            self.indexes = np.arange(num_val) + num_train
+        else:
+            self.indexes = np.arange(num_test) + num_train + num_val
+        self.num_samples = len(self.indexes)
+
+        self.batch_size = config.batch_size
+        self.shuffle = True
+        self.on_epoch_end()
+
+    def __len__(self):
+        return int(np.floor(self.num_samples / float(self.batch_size)))
+
+    def __getitem__(self, idx):
+        # Generate unprocessed batch
+        batch_image = self.imagearray[np.sort(self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size]),:]
+        batch_imagepair, batch_ediff = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, batch_image)
+
+        return batch_imagepair, batch_ediff
+
+    def on_epoch_end(self):
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
+
+
 class ConvIsing:
     """Class for training a neural network to learn the coarse-grained
         Hamiltonian for the Ising model.
@@ -167,11 +216,12 @@ class ConvIsing:
         self.create_model(config)
 
     def create_dataset(self, config):
-        self.imagearray = np.loadtxt(config.imagefile)
-        self.earray = np.loadtxt(config.efile)/self.beta
+        self.dset = h5py.File(config.datafile, "r")
+        self.imagearray = self.dset["images"]
+        self.earray = self.dset["energies"]
         self.numdat = int(len(self.earray)*config.keep)
         self.imagearray = self.imagearray[:self.numdat,:]
-        self.earray = self.earray[:self.numdat]
+        self.earray = self.earray[:self.numdat]/self.beta
 
         ([self.cgimage, self.cgimageflip], self.exp_ediff) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, self.imagearray)
 
@@ -193,9 +243,14 @@ class ConvIsing:
         if self.exact_cg:
             self.compute_exact_cg(config)
 
+        self.train_generator = CGGeneratorIsing(self.dset, config, set="train")
+        self.val_generator = CGGeneratorIsing(self.dset, config, set="val")
+        self.test_generator = CGGeneratorIsing(self.dset, config, set="test")
+
     def compute_exact_cg(self, config):
-        self.cgref_ss = np.loadtxt(config.cgref_imagefile)
-        self.cgref_e = np.loadtxt(config.cgref_efile)/self.beta
+        self.cgref_dset = h5py.File(config.cgref_datafile, "r")
+        self.cgref_ss = self.cgref_dset["images"]
+        self.cgref_e = self.cgref_dset["energies"][:]/self.beta
 
         self.cg_e = lookup_cg_e(self.L, self.beta, self.cgf, self.cgimage, self.cgref_ss, self.cgref_e)
         cg_e_flip = lookup_cg_e(self.L, self.beta, self.cgf, self.cgimageflip, self.cgref_ss, self.cgref_e)
@@ -235,7 +290,7 @@ class ConvIsing:
         # callback_list = [best_weight]
 
         # Train neural net
-        self.history = self.model.fit(self.train_traj, self.train_ediff, verbose=self.verb, validation_data=(self.val_traj, self.val_ediff), batch_size=config.batch_size, epochs=config.num_epochs, callbacks=callback_list)
+        self.history = self.model.fit_generator(generator=self.train_generator, verbose=self.verb, validation_data=self.val_generator, epochs=config.num_epochs, callbacks=callback_list, use_multiprocessing=True, workers=1)
 
         self.reload_weights(config)
 
@@ -245,8 +300,8 @@ class ConvIsing:
     def compute_metrics(self):
         self.train_pred = self.model_energy.predict(self.train_cg).ravel()
         self.test_pred = self.model_energy.predict(self.test_cg).ravel()
-        self.train_pred_diff = self.model.predict(self.train_traj).ravel()
-        self.test_pred_diff = self.model.predict(self.test_traj).ravel()
+        self.train_pred_diff = self.model.predict_generator(generator=self.train_generator, use_multiprocessing=False).ravel()
+        self.test_pred_diff = self.model.predict_generator(generator=self.test_generator, use_multiprocessing=False).ravel()
 
         self.train_mse = np.mean(np.square(self.train_pred - np.mean(self.train_pred) + self.avg_e - self.train_e))
         self.test_mse = np.mean(np.square(self.test_pred - np.mean(self.test_pred) + self.avg_e - self.test_e))
