@@ -13,13 +13,22 @@ def run():
     config = tr.Config()
     config.L = 4
     config.conv_activ = 'log_cosh'
-    config.exact_cg = True
-    config.keep = 0.1
+    config.exact_cg = False
+    config.keep = 1.0
+    config.batch_size = 20000
+    config.num_epochs = 5
     config.verb = 1
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)
 
-    deep_conv.create_dataset(config)
+    try:
+        deep_conv.create_dataset(config)
+    except RuntimeError as error:
+        print(error)
+        print("Coarse-grained data likely already created")
+    else:
+        print("Coarse-grained data created")
+    deep_conv.load_dataset(config)
     deep_conv.run_model(config)
     deep_conv.compute_metrics()
     deep_conv.print_metrics()
