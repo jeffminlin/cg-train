@@ -22,7 +22,7 @@ def run():
     deep_conv = tr.ConvIsing(config)
 
     try:
-        deep_conv.create_dataset(config)
+        deep_conv.create_cg_dataset(config)
     except RuntimeError as error:
         print(error)
         print("Coarse-grained data likely already created")
@@ -48,79 +48,17 @@ def compute_iac(deep_conv, config):
 
 def compare_observables(deep_conv, config, num_samples, num_chains, skip):
 
-    ss_traj = mc.gen_samples(deep_conv.model.predict, int(num_samples*skip/num_chains), skip, np.random.choice([-1, 1], size=(num_chains, config.cgL*config.cgL)), 5000)
-    obs_model = mc.Observables(ss_traj.reshape([-1, config.cgL, config.cgL]))
-    obs_samples = mc.Observables(np.loadtxt(config.imagefile).reshape([-1, config.L, config.L])[:, 0::config.cg_factor, 0::config.cg_factor])
+    obs_model = mc.Observables(deep_conv.model.predict, config.cgL, num_samples, num_chains, 5000, skip)
+    obs_model.metrop_par()
+    obs_samples = mc.Observables(deep_conv.model.predict, config.cgL, num_samples, num_chains, 5000, skip)
+    with h5py.File(config.datafile, "r") as dset:
+        obs_samples.compute_observables(dset["".join(["cgimage_", config.cg_method, str(config.cg_factor)])])
 
     print()
     print("Samples generated using learned model")
     obs_model.print_observables()
     print("Samples generated with Swendsen-Wang")
     obs_samples.print_observables()
-
-
-def project_model(deep_conv, config):
-
-    samples = np.loadtxt(config.imagefile).reshape([-1, config.L, config.L])[:, 0::config.cg_factor, 0::config.cg_factor]
-    obs = mc.Observables(samples)
-    e_traj = deep_conv.model_energy.predict(samples)
-    projection = np.linalg.lstsq(obs.numspins * np.column_stack((np.ones(len(samples)), obs.first_nearest, obs.second_nearest, obs.four_spins)), e_traj, rcond=None)
-
-    print()
-    print("Projection onto constant, first nn, second nn, and four spin products:")
-    print(projection[0])
-    print()
-    print("Norm of constant:", np.linalg.norm(obs.numspins * np.ones(len(samples))))
-    print("Norm of first nn:", np.linalg.norm(obs.numspins * obs.first_nearest))
-    print("Norm of second nn:", np.linalg.norm(obs.numspins * obs.first_nearest))
-    print("Norm of four spin products:", np.linalg.norm(obs.numspins * obs.four_spins))
-    print("Norm of model energy:", np.linalg.norm(e_traj))
-    print("Norm of residual:", np.sqrt(projection[1][0]))
-    print("R^2:", 1 - projection[1][0] / (len(e_traj) * np.var(e_traj)))
-    print()
-
-
-def vary_sample_size(config):
-
-    config.L = 4
-    config.exact_cg = True
-    config.refresh_config()
-
-    rand_sample_size = 5.0 * np.power(10.0, np.linspace(6.0, 4.0, num=30))
-    sample_size_list = []
-    test_mse_list = []
-    test_cg_mse_list = []
-
-    for sample_size in rand_sample_size:
-        config.keep = sample_size/5.0e6
-
-        deep_conv = tr.ConvIsing(config)
-        deep_conv.create_dataset(config)
-
-        sample_size_list.append(deep_conv.numdat)
-        print("Sample size is:", deep_conv.numdat)
-        print()
-
-        deep_conv.run_model(config)
-        deep_conv.compute_metrics()
-        deep_conv.print_metrics()
-        test_mse_list.append(deep_conv.test_mse_diff)
-        test_cg_mse_list.append(deep_conv.test_cg_mse_diff)
-
-    plt.figure(1)
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel("sample size")
-    plt.ylabel("Test MSE against CG labels")
-    plt.plot(sample_size_list, test_cg_mse_list, '.')
-    plt.savefig("./figs/L4_ising_sample_size_vs_CG_loss.png", bbox_inches="tight")
-    plt.figure(2)
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel("sample size")
-    plt.ylabel("Test MSE against instantaneous labels")
-    plt.plot(sample_size_list, test_mse_list, '.')
-    plt.savefig("./figs/L4_ising_sample_size_vs_noisy_loss.png", bbox_inches="tight")
 
 
 def main():

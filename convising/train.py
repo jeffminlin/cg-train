@@ -315,7 +315,7 @@ class ConvIsing:
         self.exact_cg = config.exact_cg
         self.create_model(config)
 
-    def create_dataset(self, config):
+    def create_cg_dataset(self, config):
         with h5py.File(config.datafile, "r+") as dset:
             self.imagearray = dset["images"]
 

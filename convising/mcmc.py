@@ -2,10 +2,6 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-# import progressbar as pb
-
-
-# wgt = [' [', pb.Timer(), '] ', pb.Bar(marker='█'), ' ', pb.Counter(), ' (', pb.Percentage(), ')', ' [', pb.AdaptiveETA(), '] ']
 
 
 def metropolis_par(ediff_fun, tn, nsample, ss0, is_traj=False):
@@ -128,56 +124,110 @@ def plot_iac(Ms, labels, title, kappa, plotname):
 
 class Observables:
 
-    def __init__(self, images):
-        self.numspins = images.shape[1] * images.shape[2]
-        self.compute_neighbor_energy(images)
-        self.compute_mag(images)
+    def __init__(self, ediff_fun, L, num_samples, num_chains, num_burn, skip):
+        self.ediff_fun = ediff_fun
+        self.numspins = L*L
+        self.L = L
+        self.num_samples = num_samples
+        self.num_chains = num_chains
+        self.num_burn = num_burn
+        self.skip = skip
+        self.num_sweeps = (int(self.num_samples * self.skip / self.num_chains)
+            + self.num_burn)
 
-    def compute_neighbor_energy(self, images):
-        self.first_nearest = np.sum(0.5 * (images * np.roll(images, 1, axis=1)
-            + images * np.roll(images, -1, axis=1)
-            + images * np.roll(images, 1, axis=2)
-            + images * np.roll(images, -1, axis=2)), axis=(1,2))
-        self.first_nearest /= self.numspins
-        self.avg_first_nearest = np.mean(self.first_nearest)
-        self.var_first_nearest = np.var(self.first_nearest)
-        self.second_nearest = np.sum(0.5 * (images * np.roll(images, (1,1), axis=(1,2))
-            + images * np.roll(images, (1,-1), axis=(1,2))
-            + images * np.roll(images, (-1,1), axis=(1,2))
-            + images * np.roll(images, (-1,-1), axis=(1,2))), axis=(1,2))
-        self.second_nearest /= self.numspins
-        self.avg_second_nearest = np.mean(self.second_nearest)
-        self.var_second_nearest = np.var(self.second_nearest)
-        self.four_spins = np.sum(images * np.roll(images, 1, axis=1)
-            * np.roll(images, 1, axis=2)
-            * np.roll(images, (1,1), axis=(1,2)), axis=(1,2))
-        self.four_spins /= self.numspins
-        self.avg_four_spins = np.mean(self.four_spins)
-        self.var_four_spins = np.var(self.four_spins)
+        self.avgs, self.vars = self.compute_observables(np.zeros((1, self.L, self.L)))
+        self.num_recorded = 0
 
-    def compute_mag(self, images):
-        self.mag = np.sum(images, axis=(1,2)) / self.numspins
-        self.avg_mag = np.mean(self.mag)
-        self.var_mag = np.var(self.mag)
+    def compute_observables(self, images):
+        avgs = np.zeros(4)
+        vars = np.zeros(4)
+
+        for image, imageidx in enumerate(images):
+            first_nearest = np.sum(0.5 * (image * np.roll(image, 1, axis=0)
+                + image * np.roll(image, -1, axis=0)
+                + image * np.roll(image, 1, axis=1)
+                + image * np.roll(image, -1, axis=1)), axis=(0,1))
+            avgs_new[0] = first_nearest / self.numspins
+            second_nearest = np.sum(0.5 * (image * np.roll(image, (1,1), axis=(0,1))
+                + image * np.roll(image, (1,-1), axis=(0,1))
+                + image * np.roll(image, (-1,1), axis=(0,1))
+                + image * np.roll(image, (-1,-1), axis=(0,1))), axis=(0,1))
+            avgs_new[1] = second_nearest / self.numspins
+            four_spins = np.sum(image * np.roll(image, 1, axis=0)
+                * np.roll(image, 1, axis=1)
+                * np.roll(image, (1,1), axis=(0,1)), axis=(0,1))
+            avgs_new[2] = four_spins / self.numspins
+            mag = np.sum(image, axis=(0,1))
+            avgs_new[3] = mag / self.num_spins
+            vars_new = np.zeros(4)
+            avgs, vars = self.update_observables(avgs, vars, imageidx, avgs_new, vars_new, 1)
+
+        return avgs, vars
+
+    def metrop_par(self):
+        accept_count = 0
+        ss = np.random.choice([-1, 1], size=(self.num_chains,
+                                             self.L*self.L))
+
+        random_spin_flip = np.random.randint(N, size=(self.num_sweeps,
+            self.num_chains))
+
+        for tstep, ssidx in enumerate(random_spin_flip):
+            prop_ss = np.copy(ss)
+            prop_ss[range(self.num_chains), ssidx] *= -1
+
+            energy_diff = self.ediff_fun([ss.reshape((-1, self.L, self.L)), prop_ss.reshape((-1, self.L, self.L))]).reshape((self.num_chains))
+            flipidx = np.random.random(self.num_chains) < energy_diff
+
+            accept_count += np.count_nonzero(flipidx)
+            ss[np.arange(self.num_chains)[flipidx], ssidx[flipidx]] *= -1
+
+            if (tstep % self.skip == 0) and (tstep > self.num_burn):
+                # Compute observables
+                sums = np.zeros(4)
+                sum_sqs = np.zeros(4)
+                avgs, vars = self.compute_observables(ss.reshape((-1, self.L, self.L)))
+                self.avgs, self.vars = self.update_observables(self.avgs, self.vars, self.num_recorded, avgs, vars, self.num_chains)
+                self.num_recorded += self.num_chains
+
+            return accept_count / (self.num_sweeps * self.num_chains)
+
+    def update_observables(self, avgs_old, vars_old, num_old, avgs_new, vars_new, num_new):
+        # Parallel updates
+        delta = avgs_new - avgs_old
+        num_tot = num_old + num_new
+        M2_old = vars_old * (num_old - 1.0)
+        M2_new = vars_new * (num_new - 1.0)
+        if num_old - 2*num_new < 0:
+            avgs = (avgs_old * num_old + avgs_new * num_new) / num_tot
+        else:
+            avgs = avgs_old + delta * num_new / num_tot
+        M2 = M2_old + M2_new + np.square(delta) * num_old * num_new / num_tot
+        vars = M2 / (num_tot - 1.0)
+
+        return avgs, vars
 
     def print_observables(self):
-        num_samples = len(self.first_nearest)
         print()
-        print("Number of samples:", num_samples)
+        print("Number of samples:", self.num_recorded)
         print()
-        print("Nearest neighbor interaction (per spin):", self.avg_first_nearest)
-        print("Variance of nn interaction (per spin):", self.var_first_nearest)
-        print("Standard error, nn:", np.sqrt(self.var_first_nearest/num_samples))
+        print("Nearest neighbor interaction (per spin):", self.avgs[0])
+        print("Variance of nn interaction (per spin):", self.vars[0])
+        print("Standard error (biased), nn:", np.sqrt(self.vars[0] /
+            self.num_recorded))
         print()
-        print("Second nn interaction (per spin):", self.avg_second_nearest)
-        print("Variance of second nn interaction (per spin):", self.var_second_nearest)
-        print("Standard error, second nn:", np.sqrt(self.var_second_nearest/num_samples))
+        print("Second nn interaction (per spin):", self.avgs[1])
+        print("Variance of second nn interaction (per spin):", self.vars[1])
+        print("Standard error, second nn:", np.sqrt(self.vars[1] /
+            self.num_recorded))
         print()
-        print("Four spin interaction (per spin):", self.avg_four_spins)
-        print("Variance of four spin interaction (per spin):", self.var_four_spins)
-        print("Standard error, four spin:", np.sqrt(self.var_four_spins/num_samples))
+        print("Four spin interaction (per spin):", self.avgs[2])
+        print("Variance of four spin interaction (per spin):", self.vars[2])
+        print("Standard error, four spin:", np.sqrt(self.vars[2] /
+            self.num_recorded))
         print()
-        print("Average magnetization (per spin):", self.avg_mag)
-        print("Variance of magnetization (per spin):", self.var_mag)
-        print("Standard error, mag:", np.sqrt(self.var_mag/num_samples))
+        print("Average magnetization (per spin):", self.avgs[3])
+        print("Variance of magnetization (per spin):", self.vars[3])
+        print("Standard error, mag:", np.sqrt(self.vars[3] /
+            self.num_recorded))
         print()
