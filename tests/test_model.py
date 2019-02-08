@@ -10,6 +10,7 @@ def test_z2_sym_L8_log_cosh():
 
     config = tr.Config()
     config.L = 8
+    config.cg_method = 'deci'
     config.conv_activ = 'log_cosh'
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)
@@ -26,6 +27,7 @@ def test_translate_sym_L8():
 
     config = tr.Config()
     config.L = 8
+    config.cg_method = 'deci'
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)
     deep_conv.reload_weights(config)
@@ -42,6 +44,7 @@ def test_translate_sym_L8_log_cosh():
 
     config = tr.Config()
     config.L = 8
+    config.cg_method = 'deci'
     config.conv_activ = 'log_cosh'
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)

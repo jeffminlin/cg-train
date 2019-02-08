@@ -70,10 +70,10 @@ function ising_2d_sw(coef,tN,ss0,nSample;is_trajectory=false)
 
   Magavg  = zeros(size(ss0))
   Coravg  = zeros(size(ss0))
-  ttmag   = zeros(div(tN,nSample))
+  ttmag   = zeros(floor(Int, div(tN,nSample)))
 
-  ss_traj  = zeros(Int64,N*N,div(tN,nSample))
-  energy_traj = zeros(div(tN,nSample))
+  ss_traj  = zeros(Int64,N*N,floor(Int, div(tN,nSample)))
+  energy_traj = zeros(floor(Int, div(tN,nSample)))
 
   acceptCount = 0
   ss  = copy(ss0)                # current spin system   NxN

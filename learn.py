@@ -1,4 +1,5 @@
 import numpy as np
+import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -49,21 +50,37 @@ def compute_iac(deep_conv, config):
 def compare_observables(deep_conv, config, num_samples, num_chains, skip):
 
     obs_model = mc.Observables(deep_conv.model.predict, config.cgL, num_samples, num_chains, 5000, skip)
-    obs_model.metrop_par()
-    obs_samples = mc.Observables(deep_conv.model.predict, config.cgL, num_samples, num_chains, 5000, skip)
-    with h5py.File(config.datafile, "r") as dset:
-        obs_samples.compute_observables(dset["".join(["cgimage_", config.cg_method, str(config.cg_factor)])])
-
+    obs_model.metrop_par(1000)
     print()
     print("Samples generated using learned model")
     obs_model.print_observables()
+    print()
+
+    obs_samples = mc.Observables(deep_conv.model.predict, config.cgL, num_samples, num_chains, 5000, skip)
+    with h5py.File(config.datafile, "r") as dset:
+        obs_samples.avgs, obs_samples.vars = obs_samples.compute_observables(dset["".join(["cgimage_", config.cg_method, str(config.cg_factor)])], 1000)
+    obs_samples.num_recorded = 5e6
+    print()
     print("Samples generated with Swendsen-Wang")
     obs_samples.print_observables()
+    print()
 
 
 def main():
 
-    run()
+    config = tr.Config()
+    config.L = 16
+    config.conv_activ = 'log_cosh'
+    config.refresh_config()
+    deep_conv = tr.ConvIsing(config)
+
+    # deep_conv.create_cg_dataset(config)
+    deep_conv.load_dataset(config)
+    deep_conv.run_model(config)
+
+    deep_conv.compute_metrics()
+    deep_conv.print_metrics()
+    deep_conv.graph_loss(config)
 
 
 if __name__ == '__main__':

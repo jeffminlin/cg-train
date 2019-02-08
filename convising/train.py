@@ -49,7 +49,7 @@ class Config:
     def __init__(self):
         self.L = 8
         self.beta = .4406868
-        self.cg_method = "deci"
+        self.cg_method = "maj"
         self.cg_factor = 2
 
         self.keep = 1.0
@@ -57,7 +57,7 @@ class Config:
         self.val_split = 1./9.
         self.batch_size = 20000
         self.num_epochs = 1000
-        self.num_gpus = 4
+        self.num_gpus = 1
         self.verb = 0
 
         # Can set this to be True if L = 4 and the cg reference data is generated
@@ -74,9 +74,10 @@ class Config:
     def refresh_config(self):
         self.cgL = int(self.L/self.cg_factor)
 
-        self.filepath = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), "conv", self.conv_activ, "_", *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor), "nf", self.nfsym]).format(self.L, self.beta)
-        self.weightfile = "".join(["./weights/", self.filepath, ".h5"])
-        self.lossfile = "".join(["./figs/loss", self.filepath, ".png"])
+        self.filepath_core = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), "conv", self.conv_activ, "_", *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor), "nf", self.nfsym]).format(self.L, self.beta)
+        self.weightfile = "".join(["./weights/", self.filepath_core, ".h5"])
+        self.weightfile_freeze = "".join(["./weights/f", self.filepath_core, ".h5"])
+        self.lossfile = "".join(["./figs/loss", self.filepath_core, ".png"])
 
         self.datafile = "./data/L{0:d}b{1:.4e}.h5".format(self.L, self.beta)
 
@@ -106,7 +107,7 @@ class MultiGPUCheckpoint(Callback):
     def __init__(self, filepath, base_model, monitor='val_loss', verbose=0,
                  save_best_only=False, save_weights_only=False,
                  mode='auto', period=1):
-        super(MultiGPUCheckpointCallback, self).__init__()
+        super(MultiGPUCheckpoint, self).__init__()
         self.base_model = base_model
         self.monitor = monitor
         self.verbose = verbose
@@ -174,9 +175,9 @@ class MultiGPUCheckpoint(Callback):
 
 def coarse_grain(L, beta, cg_method, cgf, image):
 
+    image = image.reshape([-1,L,L])
     numdat = len(image)
     cgL = int(L/cgf)
-    image = image.reshape([-1,L,L])
     cgflipidx = np.zeros((2, numdat), dtype=int)
     # cgflipidx = np.random.randint(cgL, size=(2, numdat))
     flipidx = cgflipidx*cgf
@@ -257,8 +258,8 @@ class GeneratorIsing(Sequence):
 
     """
 
-    def __init__(self, dset, config, shuffle=True, set="test"):
-        self.exp_ediff = dset["".join(["exp_ediff_", config.cg_method, str(config.cg_factor)])]
+    def __init__(self, dset, config, num_cg, shuffle=True, set="test"):
+        self.exp_ediff = dset["".join(["exp_ediff1_", config.cg_method, str(config.cg_factor)])]
         numdat = int(len(self.exp_ediff)*config.keep)
         num_train = int(numdat*config.train_split*(1 - config.val_split))
         num_val = int(numdat*config.train_split*config.val_split)
@@ -271,9 +272,9 @@ class GeneratorIsing(Sequence):
             self.idxset = np.arange(num_test) + num_train + num_val
         self.num_samples = len(self.idxset)
 
-        self.image = dset["".join(["cgimage_", config.cg_method, str(config.cg_factor)])][self.idxset,:,:]
-        self.imageflip = dset["".join(["cgimageflip_", config.cg_method, str(config.cg_factor)])][self.idxset,:,:]
-        self.exp_ediff = self.exp_ediff[self.idxset,:,:]
+        self.image = dset["".join(["cgimage", str(num_cg), "_", config.cg_method, str(config.cg_factor)])][self.idxset,:,:]
+        self.imageflip = dset["".join(["cgimageflip", str(num_cg), "_", config.cg_method, str(config.cg_factor)])][self.idxset,:,:]
+        self.exp_ediff = self.exp_ediff[self.idxset.tolist()]
 
         self.indexes = np.arange(self.num_samples)
         self.batch_size = config.batch_size
@@ -285,7 +286,7 @@ class GeneratorIsing(Sequence):
 
     def __getitem__(self, idx):
         # Generate unprocessed batch
-        batch_image = self.image[self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size],:,:]
+        batch_image = self.image[self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size].tolist(),:,:]
         batch_imageflip = self.imageflip[self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size].tolist(),:,:]
         batch_ediff = self.exp_ediff[self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size].tolist()]
 
@@ -294,6 +295,19 @@ class GeneratorIsing(Sequence):
     def on_epoch_end(self):
         if self.shuffle == True:
             np.random.shuffle(self.indexes)
+
+
+def h5py_create_data_catch(dset, dataname, data, dtype=None):
+
+    if dtype is None:
+        dtype = data.dtype
+    try:
+        dset.create_dataset(dataname, data=data, dtype=dtype)
+    except RuntimeError as error:
+        print(error)
+        print("Coarse-grained data likely already created,", dataname)
+    else:
+        print("Coarse-grained data created,", dataname)
 
 
 class ConvIsing:
@@ -317,23 +331,27 @@ class ConvIsing:
 
     def create_cg_dataset(self, config):
         with h5py.File(config.datafile, "r+") as dset:
-            self.imagearray = dset["images"]
+            self.imagearray = dset["images"][:,:]
 
-            ([self.cgimage, self.cgimageflip], self.exp_ediff) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, self.imagearray)
+            ([cgimage1, cgimageflip1], exp_ediff1) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, self.imagearray)
+            ([cgimage2, cgimageflip2], _) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, cgimage1)
 
-            dset.create_dataset("".join(["cgimage_", config.cg_method, str(config.cg_factor)]), data=self.cgimage, dtype=int)
-            dset.create_dataset("".join(["cgimageflip_", config.cg_method, str(config.cg_factor)]), data=self.cgimageflip, dtype=int)
-            dset.create_dataset("".join(["exp_ediff_", config.cg_method, str(config.cg_factor)]), data=self.exp_ediff)
+            h5py_create_data_catch(dset, "".join(["cgimage1_", config.cg_method, str(config.cg_factor)]), data=cgimage1, dtype='i1')
+            h5py_create_data_catch(dset, "".join(["cgimageflip1_", config.cg_method, str(config.cg_factor)]), data=cgimageflip1, dtype='i1')
+            h5py_create_data_catch(dset, "".join(["exp_ediff1_", config.cg_method, str(config.cg_factor)]), data=exp_ediff1)
+
+            h5py_create_data_catch(dset, "".join(["cgimage2_", config.cg_method, str(config.cg_factor)]), data=cgimage2, dtype='i1')
+            h5py_create_data_catch(dset, "".join(["cgimageflip2_", config.cg_method, str(config.cg_factor)]), data=cgimageflip2, dtype='i1')
+            # dset.create_dataset("".join(["exp_ediff2_", config.cg_method, str(config.cg_factor)]), data=exp_ediff2)
 
     def load_dataset(self, config):
         self.dset = h5py.File(config.datafile, "r")
-        self.train_generator = GeneratorIsing(self.dset, config, shuffle=True, set="train")
-        self.val_generator = GeneratorIsing(self.dset, config, shuffle=True, set="val")
-        self.test_generator = GeneratorIsing(self.dset, config, shuffle=False, set="test")
         if self.exact_cg:
             self.compute_exact_cg(config)
 
     def compute_exact_cg(self, config):
+        self.cgimage = self.dset["".join(["cgimage_", config.cg_method, str(config.cg_factor)])]
+        self.cgimageflip = self.dset["".join(["cgimageflip_", config.cg_method, str(config.cg_factor)])]
         self.cgref_dset = h5py.File(config.cgref_datafile, "r")
         self.cgref_ss = self.cgref_dset["images"]
         self.cgref_e = self.cgref_dset["energies"][:]/self.beta
@@ -341,19 +359,29 @@ class ConvIsing:
         self.cg_e = lookup_cg_e(self.L, self.beta, self.cgf, self.cgimage, self.cgref_ss, self.cgref_e)
         cg_e_flip = lookup_cg_e(self.L, self.beta, self.cgf, self.cgimageflip, self.cgref_ss, self.cgref_e)
         self.cg_exp_ediff = np.exp(-self.beta*(cg_e_flip - self.cg_e))
-        self.avg_cg_e = np.mean(self.cg_e)
-        self.avg_exp_cg_e = np.mean(self.cg_exp_ediff)
 
     def create_model(self, config):
         K.clear_session()
         conv_activ = config.conv_activ
-        activ_fcn = 'elu'
+        activ_fcn = 'relu'
         kninit = 'glorot_normal'
         self.model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
         self.model = mod.model_e_diff(config, self.model_energy)
 
-    def run_model(self, config):
-        best_weight = MultiGPUCheckpoint(config.weightfile, self.model_energy,
+    def run_model(self, config, freeze=False):
+        train_generator = GeneratorIsing(self.dset, config, 1, shuffle=True, set="train")
+        val_generator = GeneratorIsing(self.dset, config, 1, shuffle=True, set="val")
+
+        weightfile = config.weightfile
+        if freeze:
+            weightfile = config.weightfile_freeze
+            for layer in self.model_energy.layers[:-1]:
+                layer.trainable = False
+        else:
+            for layer in self.model_energy.layers:
+                layer.trainable = True
+
+        best_weight = MultiGPUCheckpoint(weightfile, self.model_energy,
             monitor="val_loss", save_best_only=True, save_weights_only=True)
         early_stop = EarlyStopping(monitor="val_loss", patience=100,
             mode='min') # Setting patience=config.num_epochs means the
@@ -368,20 +396,18 @@ class ConvIsing:
         if config.num_gpus > 1:
             par_model = multi_gpu_model(self.model, gpus=config.num_gpus)
             par_model.compile(loss='mean_squared_error', optimizer='Nadam')
-            self.history =
-                par_model.fit_generator(generator=self.train_generator,
+            self.history = par_model.fit_generator(generator=train_generator,
                                          verbose=self.verb,
-                                         validation_data=self.val_generator,
+                                         validation_data=val_generator,
                                          epochs=config.num_epochs,
                                          callbacks=callback_list,
                                          use_multiprocessing=False,
                                          max_queue_size=20)
         else:
             self.model.compile(loss='mean_squared_error', optimizer='Nadam')
-            self.history =
-                self.model.fit_generator(generator=self.train_generator,
+            self.history = self.model.fit_generator(generator=train_generator,
                                          verbose=self.verb,
-                                         validation_data=self.val_generator,
+                                         validation_data=val_generator,
                                          epochs=config.num_epochs,
                                          callbacks=callback_list,
                                          use_multiprocessing=False,
@@ -389,20 +415,37 @@ class ConvIsing:
 
         self.reload_weights(config)
 
-    def reload_weights(self, config):
-        self.model_energy.load_weights(config.weightfile)
+    def reload_weights(self, config, freeze=False):
+        weightfile = config.weightfile
+        if freeze:
+            weightfile = config.weightfile_freeze
+        self.model_energy.load_weights(weightfile)
 
     def compute_metrics(self):
-        self.train_pred_diff = self.model.evaluate_generator(generator=self.train_generator, use_multiprocessing=False).ravel()
-        self.test_pred_diff = self.model.evaluate_generator(generator=self.test_generator, use_multiprocessing=False).ravel()
+        train_generator = GeneratorIsing(self.dset, config, 1, shuffle=True, set="train")
+        test_generator1 = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test")
+        test_generator2 = GeneratorIsing(self.dset, config, 2, shuffle=False, set="test")
+        self.train_pred_diff = self.model.evaluate_generator(generator=train_generator, use_multiprocessing=False).ravel()
+        self.test_pred_diff = self.model.evaluate_generator(generator=test_generator, use_multiprocessing=False).ravel()
 
         if self.exact_cg:
             self.compute_cg_metrics()
 
-    def compute_cg_metrics(self):
-        self.train_cg_mse = np.mean(np.square(self.train_pred - np.mean(self.train_pred) + self.avg_cg_e - self.train_cg_e))
-        self.test_cg_mse = np.mean(np.square(self.test_pred - np.mean(self.test_pred) + self.avg_cg_e - self.test_cg_e))
+        nn_basis = Model(inputs = model_energy.layers[0].input, outputs = model_energy.layers[-2].output)
+        nn_coarse = nn_basis.predict_generator(generator=test_generator1, use_multiprocessing=False)
+        nn_fine = nn_basis.predict_generator(generator=test_generator2, use_multiprocessing=False)
+        coarse_avg = np.average(nn_coarse, axis=0)
+        fine_avg=np.average(M_1, axis=0)
+        Mcc = np.matmul(nn_coarse.transpose(), nn_coarse)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), coarse_avg)
+        self.cc_cond = np.linalg.cond(Mcc)
+        Mcf = np.matmul(nn_coarse.transpose(), nn_fine)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), fine_avg)
 
+        self.J = np.linalg.solve(Mcc, Mcf)
+        self.J_eigs, _ = np.linalg.eig(self.J)
+        self.criticalexp = np.log(2)/np.log(np.max(self.J_eigs))
+
+
+    def compute_cg_metrics(self):
         self.train_cg_mse_diff = np.mean(np.square(self.train_pred_diff - self.train_cg_ediff))
         self.test_cg_mse_diff = np.mean(np.square(self.test_pred_diff - self.test_cg_ediff))
 
@@ -418,6 +461,11 @@ class ConvIsing:
         if self.exact_cg:
             self.print_cg_metrics()
         print()
+
+        print("Mcc^(-1)Mcf:", self.J)
+        print("Eigenvalues:", self.J_eigs)
+        print("Condition number of Mcc:", self.cc_cond)
+        print("Critical exp:", self.criticalexp)
 
     def print_cg_metrics(self):
         print()
