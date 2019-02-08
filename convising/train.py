@@ -9,10 +9,12 @@ from keras import optimizers
 from keras import regularizers
 from keras.engine.topology import Layer
 from keras import backend as K
+from keras.models import Model
 from keras.utils import Sequence
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import EarlyStopping
 from keras.callbacks import Callback
+import tensorflow as tf
 
 import convising.models as mod
 
@@ -66,7 +68,7 @@ class Config:
         self.w_size = 3
         self.alpha = 4
         self.conv_activ = 'linear'
-        self.dense_nodes = [40, 40]
+        self.dense_nodes = [40, 20]
         self.nfsym = "none"
 
         self.refresh_config()
@@ -258,7 +260,7 @@ class GeneratorIsing(Sequence):
 
     """
 
-    def __init__(self, dset, config, num_cg, shuffle=True, set="test"):
+    def __init__(self, dset, config, num_cg, shuffle=True, set="test", flip=True):
         self.exp_ediff = dset["".join(["exp_ediff1_", config.cg_method, str(config.cg_factor)])]
         numdat = int(len(self.exp_ediff)*config.keep)
         num_train = int(numdat*config.train_split*(1 - config.val_split))
@@ -276,6 +278,7 @@ class GeneratorIsing(Sequence):
         self.imageflip = dset["".join(["cgimageflip", str(num_cg), "_", config.cg_method, str(config.cg_factor)])][self.idxset,:,:]
         self.exp_ediff = self.exp_ediff[self.idxset.tolist()]
 
+        self.flip = flip
         self.indexes = np.arange(self.num_samples)
         self.batch_size = config.batch_size
         self.shuffle = shuffle
@@ -290,7 +293,10 @@ class GeneratorIsing(Sequence):
         batch_imageflip = self.imageflip[self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size].tolist(),:,:]
         batch_ediff = self.exp_ediff[self.indexes[idx * self.batch_size:(idx + 1) * self.batch_size].tolist()]
 
-        return ([batch_image, batch_imageflip], batch_ediff)
+        if self.flip:
+            return ([batch_image, batch_imageflip], batch_ediff)
+        else:
+            return([batch_image], batch_ediff)
 
     def on_epoch_end(self):
         if self.shuffle == True:
@@ -334,7 +340,7 @@ class ConvIsing:
             self.imagearray = dset["images"][:,:]
 
             ([cgimage1, cgimageflip1], exp_ediff1) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, self.imagearray)
-            ([cgimage2, cgimageflip2], _) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, cgimage1)
+            ([cgimage2, cgimageflip2], _) = coarse_grain(int(self.L/self.cgf), self.beta, self.cg_method, self.cgf, cgimage1)
 
             h5py_create_data_catch(dset, "".join(["cgimage1_", config.cg_method, str(config.cg_factor)]), data=cgimage1, dtype='i1')
             h5py_create_data_catch(dset, "".join(["cgimageflip1_", config.cg_method, str(config.cg_factor)]), data=cgimageflip1, dtype='i1')
@@ -367,6 +373,7 @@ class ConvIsing:
         kninit = 'glorot_normal'
         self.model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
         self.model = mod.model_e_diff(config, self.model_energy)
+        self.model.compile(loss='mean_squared_error', optimizer='Nadam')
 
     def run_model(self, config, freeze=False):
         train_generator = GeneratorIsing(self.dset, config, 1, shuffle=True, set="train")
@@ -404,7 +411,6 @@ class ConvIsing:
                                          use_multiprocessing=False,
                                          max_queue_size=20)
         else:
-            self.model.compile(loss='mean_squared_error', optimizer='Nadam')
             self.history = self.model.fit_generator(generator=train_generator,
                                          verbose=self.verb,
                                          validation_data=val_generator,
@@ -421,26 +427,35 @@ class ConvIsing:
             weightfile = config.weightfile_freeze
         self.model_energy.load_weights(weightfile)
 
-    def compute_metrics(self):
-        train_generator = GeneratorIsing(self.dset, config, 1, shuffle=True, set="train")
+    def compute_metrics(self, config):
+        train_generator = GeneratorIsing(self.dset, config, 1, shuffle=False, set="train")
         test_generator1 = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test")
-        test_generator2 = GeneratorIsing(self.dset, config, 2, shuffle=False, set="test")
-        self.train_pred_diff = self.model.evaluate_generator(generator=train_generator, use_multiprocessing=False).ravel()
-        self.test_pred_diff = self.model.evaluate_generator(generator=test_generator, use_multiprocessing=False).ravel()
+        test_generator1_noflip = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test", flip=False)
+        test_generator2_noflip = GeneratorIsing(self.dset, config, 2, shuffle=False, set="test", flip=False)
+        self.train_mse_diff = self.model.evaluate_generator(generator=train_generator, use_multiprocessing=False).ravel()
+        self.test_mse_diff = self.model.evaluate_generator(generator=test_generator1, use_multiprocessing=False).ravel()
 
         if self.exact_cg:
             self.compute_cg_metrics()
 
-        nn_basis = Model(inputs = model_energy.layers[0].input, outputs = model_energy.layers[-2].output)
-        nn_coarse = nn_basis.predict_generator(generator=test_generator1, use_multiprocessing=False)
-        nn_fine = nn_basis.predict_generator(generator=test_generator2, use_multiprocessing=False)
-        coarse_avg = np.average(nn_coarse, axis=0)
-        fine_avg=np.average(M_1, axis=0)
-        Mcc = np.matmul(nn_coarse.transpose(), nn_coarse)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), coarse_avg)
-        self.cc_cond = np.linalg.cond(Mcc)
-        Mcf = np.matmul(nn_coarse.transpose(), nn_fine)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), fine_avg)
+        nn_basis = Model(inputs = self.model_energy.layers[0].input, outputs = self.model_energy.layers[-2].output)
+        nn_fine = nn_basis.predict_generator(generator=test_generator1_noflip, use_multiprocessing=False)
+        nn_coarse = nn_basis.predict_generator(generator=test_generator2_noflip, use_multiprocessing=False)
 
-        self.J = np.linalg.solve(Mcc, Mcf)
+        print("Singular values (fine): ",K.eval(tf.svd(nn_fine, compute_uv = False)))
+        print("Singular values (coarse): ",K.eval(tf.svd(nn_coarse, compute_uv = False)))
+
+        coarse_avg = np.average(nn_coarse, axis=0)
+        fine_avg = np.average(nn_fine, axis=0)
+        Mcc = np.matmul(nn_coarse.transpose(), nn_coarse)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), coarse_avg)
+        print(Mcc.shape)
+        self.cc_cond = np.linalg.cond(Mcc)
+        print(self.cc_cond)
+        Mcf = np.matmul(nn_coarse.transpose(), nn_fine)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), fine_avg)
+        print(Mcf.shape)
+
+        self.J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
+        print(self.J.shape)
         self.J_eigs, _ = np.linalg.eig(self.J)
         self.criticalexp = np.log(2)/np.log(np.max(self.J_eigs))
 

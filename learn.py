@@ -70,6 +70,7 @@ def main():
 
     config = tr.Config()
     config.L = 16
+    config.num_gpus = 4
     config.conv_activ = 'log_cosh'
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)
@@ -77,8 +78,9 @@ def main():
     deep_conv.create_cg_dataset(config)
     deep_conv.load_dataset(config)
     deep_conv.run_model(config)
+    deep_conv.reload_weights(config)
 
-    deep_conv.compute_metrics()
+    deep_conv.compute_metrics(config)
     deep_conv.print_metrics()
     deep_conv.graph_loss(config)
 
