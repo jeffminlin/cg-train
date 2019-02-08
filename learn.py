@@ -74,7 +74,7 @@ def main():
     config.refresh_config()
     deep_conv = tr.ConvIsing(config)
 
-    # deep_conv.create_cg_dataset(config)
+    deep_conv.create_cg_dataset(config)
     deep_conv.load_dataset(config)
     deep_conv.run_model(config)
 
