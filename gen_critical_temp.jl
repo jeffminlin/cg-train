@@ -5,7 +5,7 @@ include("mcmc_ising.jl")
 
 using .MCMCIsing
 
-N = 16
+N = 64
 println("Size of original spin system = ", N)
 
 beta = 0.4406868

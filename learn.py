@@ -68,21 +68,36 @@ def compare_observables(deep_conv, config, num_samples, num_chains, skip):
 
 def main():
 
-    config = tr.Config()
-    config.L = 16
-    config.num_gpus = 4
-    config.conv_activ = 'log_cosh'
-    config.refresh_config()
-    deep_conv = tr.ConvIsing(config)
+    config_deep = tr.Config()
+    config_deep.L = 64
+    config_deep.dense_nodes = [20, 20, 3]
+    config_deep.num_gpus = 4
+    config_deep.verb = 0
+    config_deep.model = 'deep_conv'
+    config_deep.conv_activ = 'log_cosh'
+    config_deep.refresh_config()
 
-    deep_conv.create_cg_dataset(config)
-    deep_conv.load_dataset(config)
-    deep_conv.run_model(config)
-    deep_conv.reload_weights(config)
+    # config_linear = tr.Config()
+    # config_linear.L = 16
+    # config_linear.verb = 1
+    # config_linear.model = 'linear_basis'
+    # config_linear.refresh_config()
 
-    deep_conv.compute_metrics(config)
+    deep_conv = tr.ConvIsing(config_deep)
+
+    deep_conv.create_cg_dataset(config_deep)
+    deep_conv.load_dataset(config_deep)
+    deep_conv.run_model(config_deep)
+    deep_conv.reload_weights(config_deep)
+
+    deep_conv.compute_metrics(config_deep)
     deep_conv.print_metrics()
-    deep_conv.graph_loss(config)
+    deep_conv.graph_loss(config_deep)
+
+    # linear_mod = tr.ConvIsing(config_linear)
+    # linear_mod.load_dataset(config_linear)
+    # linear_mod.compute_metrics(config_linear)
+    # linear_mod.print_metrics()
 
 
 if __name__ == '__main__':

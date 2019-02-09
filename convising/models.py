@@ -27,22 +27,32 @@ def deep_conv_e(config, conv_activ, activation_fcn, kninit):
 
     """
 
-    M_in = Input(shape=(None,None))
+    M_in = Input(shape=(None, None))
     M_pad = lys.PeriodicPad2D(name='pad', pad_size=config.w_size-1)(M_in)
     if config.conv_activ == 'log_cosh':
-        M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size,config.w_size], strides=(1,1), activation=log_cosh, padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
+        M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size, config.w_size], strides=(1,1), activation=log_cosh, padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
     else:
-        M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size,config.w_size], strides=(1,1), activation=config.conv_activ, padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
+        M_conv = lys.Conv2DNFSym(config.alpha, [config.w_size, config.w_size], strides=(1,1), activation=config.conv_activ, padding='valid', use_bias=False, nfsym=config.nfsym)(M_pad)
     if config.nfsym == 'z2' or config.nfsym == 'all':
-        M_conv = Lambda(lambda x: K.expand_dims(x[0])*x[1])([M_in,M_conv])
+        M_conv = Lambda(lambda x: K.expand_dims(x[0]) * x[1])([M_in, M_conv])
     if len(config.dense_nodes) > 1:
         M_fc = Dense(config.dense_nodes[0], activation=activation_fcn, use_bias=True, kernel_initializer=kninit)(M_conv)
         for nodenum in config.dense_nodes[1:]:
             M_fc = Dense(nodenum, activation=activation_fcn, use_bias=False, kernel_initializer=kninit)(M_fc)
     else:
         M_fc = Dense(config.dense_nodes[0], activation=activation_fcn, use_bias=True, kernel_initializer=kninit)(M_conv)
-    M_sum = Lambda(lambda x: K.sum(x,axis=[1,2]), name='sum_over_spins')(M_fc)
+    M_sum = Lambda(lambda x: K.sum(x, axis=[1,2]), name='sum_over_spins')(M_fc)
     M_lincomb = Dense(1, activation='linear', use_bias=False, kernel_initializer=kninit)(M_sum)
+    model_energy = Model(inputs=M_in, outputs=M_lincomb)
+
+    return model_energy
+
+
+def linear_basis(config, kninit):
+
+    M_in = Input(shape=(None, None))
+    M_basis = lys.LinearBasis()(M_in)
+    M_lincomb = Dense(1, activation='linear', use_bias=False, kernel_initializer=kninit)(M_basis)
     model_energy = Model(inputs=M_in, outputs=M_lincomb)
 
     return model_energy

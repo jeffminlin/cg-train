@@ -11,6 +11,7 @@ from keras.engine.topology import Layer
 from keras import backend as K
 from keras.models import Model
 from keras.utils import Sequence
+from keras.utils import multi_gpu_model
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import EarlyStopping
 from keras.callbacks import Callback
@@ -65,6 +66,7 @@ class Config:
         # Can set this to be True if L = 4 and the cg reference data is generated
         self.exact_cg = False
 
+        self.model = 'deep_conv'
         self.w_size = 3
         self.alpha = 4
         self.conv_activ = 'linear'
@@ -307,6 +309,7 @@ def h5py_create_data_catch(dset, dataname, data, dtype=None):
 
     if dtype is None:
         dtype = data.dtype
+
     try:
         dset.create_dataset(dataname, data=data, dtype=dtype)
     except RuntimeError as error:
@@ -371,8 +374,23 @@ class ConvIsing:
         conv_activ = config.conv_activ
         activ_fcn = 'relu'
         kninit = 'glorot_normal'
-        self.model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
-        self.model = mod.model_e_diff(config, self.model_energy)
+
+        # pick model
+        if config.model == 'deep_conv':
+            model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
+        elif config.model == 'linear_basis':
+            model_energy = mod.linear_basis(config, kninit)
+        else:
+            model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
+
+        if config.num_gpus > 1:
+            with tf.device('/cpu:0'):
+                self.model_energy = model_energy
+                self.model = mod.model_e_diff(config, self.model_energy)
+        else:
+            self.model_energy = model_energy
+            self.model = mod.model_e_diff(config, self.model_energy)
+
         self.model.compile(loss='mean_squared_error', optimizer='Nadam')
 
     def run_model(self, config, freeze=False):
@@ -442,25 +460,29 @@ class ConvIsing:
         nn_fine = nn_basis.predict_generator(generator=test_generator1_noflip, use_multiprocessing=False)
         nn_coarse = nn_basis.predict_generator(generator=test_generator2_noflip, use_multiprocessing=False)
 
-        print("Singular values (fine): ",K.eval(tf.svd(nn_fine, compute_uv = False)))
-        print("Singular values (coarse): ",K.eval(tf.svd(nn_coarse, compute_uv = False)))
+        print("Singular values (fine):", K.eval(tf.svd(nn_fine, compute_uv = False)))
+        print("Condition number of nn basis (fine):", np.linalg.cond(nn_fine))
+        print("Singular values (coarse):", K.eval(tf.svd(nn_coarse, compute_uv = False)))
+        print("Condition number of nn basis (coarse):", np.linalg.cond(nn_coarse))
 
         coarse_avg = np.average(nn_coarse, axis=0)
+        coarse_avg = coarse_avg.reshape(1, -1)
         fine_avg = np.average(nn_fine, axis=0)
+        fine_avg = fine_avg.reshape(1, -1)
         Mcc = np.matmul(nn_coarse.transpose(), nn_coarse)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), coarse_avg)
-        print(Mcc.shape)
         self.cc_cond = np.linalg.cond(Mcc)
-        print(self.cc_cond)
         Mcf = np.matmul(nn_coarse.transpose(), nn_fine)/nn_coarse.shape[0] - np.matmul(coarse_avg.transpose(), fine_avg)
-        print(Mcf.shape)
 
         self.J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
-        print(self.J.shape)
         self.J_eigs, _ = np.linalg.eig(self.J)
         self.criticalexp = np.log(2)/np.log(np.max(self.J_eigs))
 
 
     def compute_cg_metrics(self):
+        train_generator = GeneratorIsing(self.dset, config, 1, shuffle=False, set="train")
+        test_generator1 = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test")
+        self.train_pred_diff = self.model.predict_generator(generator=train_generator, use_multiprocessing=False).ravel()
+        self.test_pred_diff = self.model.predict_generator(generator=test_generator1, use_multiprocessing=False).ravel()
         self.train_cg_mse_diff = np.mean(np.square(self.train_pred_diff - self.train_cg_ediff))
         self.test_cg_mse_diff = np.mean(np.square(self.test_pred_diff - self.test_cg_ediff))
 
@@ -485,12 +507,6 @@ class ConvIsing:
     def print_cg_metrics(self):
         print()
         print("CG Metrics:")
-        print()
-        print("Average CG energy of samples:", self.avg_cg_e)
-        print("Average exp CG energy of samples:", self.avg_exp_cg_e)
-        print()
-        print("Train MSE against shifted CG E:", self.train_cg_mse)
-        print("Test MSE against shifted CG E:", self.test_cg_mse)
         print()
         print("Train MSE against CG E diff:", self.train_cg_mse_diff)
         print("Test MSE against CG E diff:", self.test_cg_mse_diff)

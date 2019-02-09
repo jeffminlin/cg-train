@@ -124,7 +124,7 @@ def plot_iac(Ms, labels, title, kappa, plotname):
 
 class Observables:
 
-    def __init__(self, ediff_fun, L, num_samples, num_chains, num_burn, skip):
+    def __init__(self, ediff_fun, L, num_samples, num_chains, num_burn, batch_size, skip):
         self.ediff_fun = ediff_fun
         self.numspins = L*L
         self.L = L
@@ -135,7 +135,7 @@ class Observables:
         self.num_sweeps = (int(self.num_samples * self.skip / self.num_chains)
             + self.num_burn)
 
-        self.avgs, self.vars = self.compute_observables(np.zeros((1, self.numspins)))
+        self.avgs, self.vars = self.compute_observables(np.zeros((1, self.numspins)), batch_size)
         self.num_recorded = 0
 
     def compute_observables(self, images, batch_size):

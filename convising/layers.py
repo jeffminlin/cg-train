@@ -20,13 +20,13 @@ class PeriodicPad2D(Layer):
         leftpad = int(self.pad_size/2)
         rightpad = self.pad_size - leftpad
         x = inputs
-        x_1 = K.concatenate([x[:,:,-leftpad:],x,x[:,:,:rightpad]], axis=2)
-        y = K.concatenate([x_1[:,-leftpad:,:],x_1,x_1[:,:rightpad,:]], axis=1)
+        x_1 = K.concatenate([x[:,:,-leftpad:], x, x[:,:,:rightpad]], axis=2)
+        y = K.concatenate([x_1[:,-leftpad:,:], x_1, x_1[:,:rightpad,:]], axis=1)
 
         return K.expand_dims(y)
 
     def compute_output_shape(self, input_shapes):
-        return (input_shapes[0],None,None,1)
+        return (input_shapes[0], None, None, 1)
 
 
 class NFSym(Layer):
@@ -58,6 +58,24 @@ class ConvBias(Layer):
 
     def compute_output_shape(self, input_shapes):
         return input_shapes
+
+
+class LinearBasis(Layer):
+
+    def __init__(self, **kwargs):
+        super(LinearBasis, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        super(LinearBasis, self).build(input_shape)
+
+    def call(self, x):
+        first_nearest = K.expand_dims(K.sum(0.5 * (x * tf.manip.roll(x, 1, axis=1) + x * tf.manip.roll(x, -1, axis=1) + x * tf.manip.roll(x, 1, axis=2) + x * tf.manip.roll(x, -1, axis=2)), axis=(1,2)), axis=1)
+        second_nearest = K.expand_dims(K.sum(0.5 * (x * tf.manip.roll(x, (1,1), axis=(1,2)) + x * tf.manip.roll(x, (1,-1), axis=(1,2)) + x * tf.manip.roll(x, (-1,1), axis=(1,2)) + x * tf.manip.roll(x, (-1,-1), axis=(1,2))), axis=(1,2)), axis=1)
+        four_spins = K.expand_dims(K.sum(x * tf.manip.roll(x, 1, axis=1) * tf.manip.roll(x, 1, axis=2) * tf.manip.roll(x, (1,1), axis=(1,2)), axis=(1,2)), axis=1)
+        return tf.concat([first_nearest, second_nearest, four_spins], 1)
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], 3)
 
 
 class GlobalD4(Constraint):
