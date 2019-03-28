@@ -23,7 +23,6 @@ import convising.models as mod
 class Config:
     """Configuration for ConvIsing and MCMC
 
-
     Attributes:
         L (int): Size of original Ising lattice (LxL)
         beta (float): Inverse temperature
@@ -35,11 +34,15 @@ class Config:
         val_split (float): Fraction of training data for validation
         batch_size (int): Number of data points per batch
         num_epochs (int): Maximum number of epochs to train
+        num_gpus (type): Description of parameter `num_gpus`.
         verb (int): Verbosity parameter for keras fit
                 (0 = no output, 1 = detailed output, 2 = some output)
 
         exact_cg (bool): Whether or not to use any data on exact cg values
-        w_size (int): Filter window size, odd if nfsym = 'all' or 'z2'
+
+        model (str): Can be either 'deep_conv' for the convolutional model or 'linear_basis' for the fixed basis model
+        activ_fcn (str): Sets the activation functions on the dense layers, e.g. relu or elu
+        w_size (int): Filter window size, must be odd if nfsym = 'all' or 'z2'
         alpha (int): Number of filters
         conv_activ (str): Choice of activation function on the
             convolutional layer, either 'linear' or 'log_cosh'
@@ -47,13 +50,15 @@ class Config:
                 each dense layer
         nfsym (str): Symmetries to enforce, can be 'none', 'z2', 'd4', or 'all'
 
-    """
+    Methods:
+        refresh_config: Must be run if the configuration changes after it is initialized, in order to fix filenames
 
-    def __init__(self):
-        self.L = 8
-        self.beta = .4406868
-        self.cg_method = "maj"
-        self.cg_factor = 2
+    """
+    def __init__(self, L = 8, beta = .4406868, cg_method = "maj", cg_factor = 2):
+        self.L = L
+        self.beta = beta
+        self.cg_method = cg_method
+        self.cg_factor = cg_factor
 
         self.keep = 1.0
         self.train_split = 9./10.
@@ -67,10 +72,11 @@ class Config:
         self.exact_cg = False
 
         self.model = 'deep_conv'
+        self.activ_fcn = 'elu'
         self.w_size = 3
         self.alpha = 4
         self.conv_activ = 'linear'
-        self.dense_nodes = [40, 20]
+        self.dense_nodes = [20, 20, 4]
         self.nfsym = "none"
 
         self.refresh_config()
@@ -78,7 +84,7 @@ class Config:
     def refresh_config(self):
         self.cgL = int(self.L/self.cg_factor)
 
-        self.filepath_core = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), "conv", self.conv_activ, "_", *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor), "nf", self.nfsym]).format(self.L, self.beta)
+        self.filepath_core = "".join(["L{0:d}b{1:.4e}", "a", str(self.alpha), "w", str(self.w_size), self.model, "_", self.conv_activ, "_", self.activ_fcn, "_", *("".join(["n",str(dn)]) for dn in self.dense_nodes), self.cg_method, str(self.cg_factor), "nf", self.nfsym]).format(self.L, self.beta)
         self.weightfile = "".join(["./weights/", self.filepath_core, ".h5"])
         self.weightfile_freeze = "".join(["./weights/f", self.filepath_core, ".h5"])
         self.lossfile = "".join(["./figs/loss", self.filepath_core, ".png"])
@@ -372,7 +378,7 @@ class ConvIsing:
     def create_model(self, config):
         K.clear_session()
         conv_activ = config.conv_activ
-        activ_fcn = 'relu'
+        activ_fcn = config.activ_fcn
         kninit = 'glorot_normal'
 
         # pick model

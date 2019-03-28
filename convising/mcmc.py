@@ -145,7 +145,7 @@ class Observables:
         vars_new = np.zeros(4)
         num_computed = 0
 
-        num_batches = int(np.floor(self.num_samples / float(batch_size)))
+        num_batches = int(np.floor(images.shape[0] / float(batch_size)))
 
         for batchidx in range(num_batches):
             image = images[batchidx * batch_size:(batchidx + 1) * batch_size,:].reshape((-1, self.L, self.L))
