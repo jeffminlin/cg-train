@@ -30,6 +30,7 @@ Todo:
 
 ## Basic API reference
 There are two main things that can be done: creating and training a network, and generating samples.
+
 Creating and training a network:
 - Create an instance of the configuration class, `config = train.Config(L, beta, cg_method, cg_factor)`, and adjust other training parameters. See the documentation block for `train.Config`
 - Create an instance of the training class, `trn = train.ConvIsing(config)`
@@ -41,6 +42,7 @@ Creating and training a network:
     - Compute the final loss and estimate the critical exponent: `trn.compute_metrics(config)`
     - Print the computed metrics: `trn.print_metrics()`
     - Graph the epochs vs. the loss function (both training and validation loss): `trn.graph_loss(config)`
+
 Generating samples and/or computing relevant observables:
 - Create an instance of the observables/MCMC class: `obs = mcmc.Observables(f, cgL, num_samples, num_chains, num_burn, batch_size, skip)`
   - `f` is a function which evaluates an exponentiated energy difference, e.g. `f = trn.model.predict`
