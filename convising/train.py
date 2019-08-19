@@ -4,17 +4,18 @@ import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import warnings
 
-from keras import optimizers
-from keras import regularizers
-from keras.engine.topology import Layer
-from keras import backend as K
-from keras.models import Model
-from keras.utils import Sequence
-from keras.utils import multi_gpu_model
-from keras.callbacks import ModelCheckpoint
-from keras.callbacks import EarlyStopping
-from keras.callbacks import Callback
+from tensorflow.keras import optimizers
+from tensorflow.keras import regularizers
+from tensorflow.keras.engine.topology import Layer
+from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras.utils import Sequence
+from tensorflow.keras.utils import multi_gpu_model
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import Callback
 import tensorflow as tf
 
 import convising.models as mod
@@ -75,7 +76,7 @@ class Config:
         self.activ_fcn = 'elu'
         self.w_size = 3
         self.alpha = 4
-        self.conv_activ = 'linear'
+        self.conv_activ = 'log_cosh'
         self.dense_nodes = [20, 20, 4]
         self.nfsym = "none"
 
@@ -318,11 +319,10 @@ def h5py_create_data_catch(dset, dataname, data, dtype=None):
 
     try:
         dset.create_dataset(dataname, data=data, dtype=dtype)
+        print("Coarse-grained data created,", dataname)
     except RuntimeError as error:
         print(error)
         print("Coarse-grained data likely already created,", dataname)
-    else:
-        print("Coarse-grained data created,", dataname)
 
 
 class ConvIsing:
@@ -344,20 +344,22 @@ class ConvIsing:
         self.exact_cg = config.exact_cg
         self.create_model(config)
 
-    def create_cg_dataset(self, config):
+    def create_cg_dataset(self, config, start_cg, end_cg):
         with h5py.File(config.datafile, "r+") as dset:
-            self.imagearray = dset["images"][:,:]
+            if start_cg == 0:
+                imagearray = dset["images"][:,:]
+            else:
+                imagearray = dset["".join(["cgimage", str(start_cg), "_", config.cg_method, str(config.cg_factor)])]
 
-            ([cgimage1, cgimageflip1], exp_ediff1) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, self.imagearray)
-            ([cgimage2, cgimageflip2], _) = coarse_grain(int(self.L/self.cgf), self.beta, self.cg_method, self.cgf, cgimage1)
+            for flipidx in range(end_cg - start_cg - 1):
+                ([cgimage, cgimageflip], exp_ediff) = coarse_grain(self.L, self.beta, self.cg_method, self.cgf, imagearray)
 
-            h5py_create_data_catch(dset, "".join(["cgimage1_", config.cg_method, str(config.cg_factor)]), data=cgimage1, dtype='i1')
-            h5py_create_data_catch(dset, "".join(["cgimageflip1_", config.cg_method, str(config.cg_factor)]), data=cgimageflip1, dtype='i1')
-            h5py_create_data_catch(dset, "".join(["exp_ediff1_", config.cg_method, str(config.cg_factor)]), data=exp_ediff1)
+                h5py_create_data_catch(dset, "".join(["cgimage", str(start_cg + flipidx + 1), "_", config.cg_method, str(config.cg_factor)]), data=cgimage, dtype='i1')
+                h5py_create_data_catch(dset, "".join(["cgimageflip", str(start_cg + flipidx + 1), "_", config.cg_method, str(config.cg_factor)]), data=cgimageflip, dtype='i1')
+                if start_cg == 0 and flipidx == 0:
+                    h5py_create_data_catch(dset, "".join(["exp_ediff1_", config.cg_method, str(config.cg_factor)]), data=exp_ediff)
 
-            h5py_create_data_catch(dset, "".join(["cgimage2_", config.cg_method, str(config.cg_factor)]), data=cgimage2, dtype='i1')
-            h5py_create_data_catch(dset, "".join(["cgimageflip2_", config.cg_method, str(config.cg_factor)]), data=cgimageflip2, dtype='i1')
-            # dset.create_dataset("".join(["exp_ediff2_", config.cg_method, str(config.cg_factor)]), data=exp_ediff2)
+                imagearray = cgimage
 
     def load_dataset(self, config):
         self.dset = h5py.File(config.datafile, "r")
@@ -382,9 +384,7 @@ class ConvIsing:
         kninit = 'glorot_normal'
 
         # pick model
-        if config.model == 'deep_conv':
-            model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
-        elif config.model == 'linear_basis':
+        if config.model == 'linear_basis':
             model_energy = mod.linear_basis(config, kninit)
         else:
             model_energy = mod.deep_conv_e(config, conv_activ, activ_fcn, kninit)
@@ -451,11 +451,11 @@ class ConvIsing:
             weightfile = config.weightfile_freeze
         self.model_energy.load_weights(weightfile)
 
-    def compute_metrics(self, config):
+    def compute_metrics(self, config, start_cg, end_cg):
         train_generator = GeneratorIsing(self.dset, config, 1, shuffle=False, set="train")
         test_generator1 = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test")
-        test_generator1_noflip = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test", flip=False)
-        test_generator2_noflip = GeneratorIsing(self.dset, config, 2, shuffle=False, set="test", flip=False)
+        test_generator1_noflip = GeneratorIsing(self.dset, config, start_cg, shuffle=False, set="test", flip=False)
+        test_generator2_noflip = GeneratorIsing(self.dset, config, end_cg, shuffle=False, set="test", flip=False)
         self.train_mse_diff = self.model.evaluate_generator(generator=train_generator, use_multiprocessing=False).ravel()
         self.test_mse_diff = self.model.evaluate_generator(generator=test_generator1, use_multiprocessing=False).ravel()
 
@@ -481,7 +481,7 @@ class ConvIsing:
 
         self.J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
         self.J_eigs, _ = np.linalg.eig(self.J)
-        self.criticalexp = np.log(2)/np.log(np.max(self.J_eigs))
+        self.criticalexp = np.log(2)/np.log(np.max(np.real(self.J_eigs)))
 
 
     def compute_cg_metrics(self):

@@ -1,5 +1,8 @@
 *.pyc
 obs.txt
-data/*
+data/
 *.sh
-slurm_out/*
+slurm_out/
+weights/
+figs/
+.vscode/

@@ -3,32 +3,31 @@ import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from keras.utils import plot_model
 
 import convising.train as tr
 import convising.mcmc as mc
 
 
-def run(L):
+def run(L, af, num_basis):
 
     config_deep = tr.Config()
     config_deep.L = L
-    config_deep.dense_nodes = [20, 20, 3]
+    config_deep.dense_nodes = [20, 20, num_basis]
     config_deep.num_gpus = 1
     config_deep.verb = 0
     config_deep.model = 'deep_conv'
-    config_deep.activ_fcn = 'elu'
+    config_deep.activ_fcn = af
     config_deep.conv_activ = 'log_cosh'
     config_deep.refresh_config()
 
     deep_conv = tr.ConvIsing(config_deep)
 
-    deep_conv.create_cg_dataset(config_deep)
+    deep_conv.create_cg_dataset(config_deep, 0, 3)
     deep_conv.load_dataset(config_deep)
-    # deep_conv.run_model(config_deep)
+    deep_conv.run_model(config_deep)
     deep_conv.reload_weights(config_deep)
 
-    deep_conv.compute_metrics(config_deep)
+    deep_conv.compute_metrics(config_deep, 2, 3)
     deep_conv.print_metrics()
     # deep_conv.graph_loss(config_deep)
 
@@ -75,7 +74,12 @@ def compare_observables(deep_conv, config, num_samples, num_chains, batch_size, 
 
 def main():
 
-    run(16)
+    L = 16
+    for af in ["selu"]:
+        for num_basis in [3, 4, 6, 7]:
+            print("Number of basis functions: ", num_basis)
+            print("Activation functions: ", af)
+            run(L, af, num_basis)
 
 
 if __name__ == '__main__':
