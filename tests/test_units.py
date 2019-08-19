@@ -24,12 +24,13 @@ def test_cg_deci():
                              [-1, -1, -1, -1],
                              [-1, -1, -1, -1],
                              [-1, -1, -1, -1]]])
-    ([test_cg, _], _) = tr.coarse_grain(
+    test_cg, _ = tr.coarse_grain(
         config.L,
         config.beta,
         config.cg_method,
         config.cg_factor,
         test_images)
+    test_cg = test_cg[0]
     deci_test_images = np.array([[[ 1,  1],
                                   [ 1,  1]],
                                  [[-1,  1],
@@ -58,12 +59,13 @@ def test_cg_maj():
                              [-1, -1, -1, -1],
                              [-1, -1, -1, -1],
                              [-1, -1, -1, -1]]])
-    ([test_cg, _], _) = tr.coarse_grain(
+    test_cg, _ = tr.coarse_grain(
         config.L,
         config.beta,
         config.cg_method,
         config.cg_factor,
         test_images)
+    test_cg = test_cg[0]
     maj_test_images = np.array([[[ 1,  1],
                                  [ 1,  1]],
                                 [[ 1,  1],
