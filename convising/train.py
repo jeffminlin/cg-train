@@ -484,7 +484,7 @@ class ConvIsing:
         self.criticalexp = np.log(2)/np.log(np.max(np.real(self.J_eigs)))
 
 
-    def compute_cg_metrics(self):
+    def compute_cg_metrics(self, config):
         train_generator = GeneratorIsing(self.dset, config, 1, shuffle=False, set="train")
         test_generator1 = GeneratorIsing(self.dset, config, 1, shuffle=False, set="test")
         self.train_pred_diff = self.model.predict_generator(generator=train_generator, use_multiprocessing=False).ravel()
