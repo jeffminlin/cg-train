@@ -6,6 +6,7 @@ data/
 slurm_out/
 weights/
 figs/
+logs/
 
 # HPC scripts
 *.sh
