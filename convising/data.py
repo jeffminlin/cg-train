@@ -4,21 +4,105 @@ import h5py
 import numpy as np
 
 
-def create_cg_dataset(
-    L, beta, cg_method, cg_factor, datapath, cg_level_start, cg_level_end
+def load_datasets(
+    datafile,
+    config_ising,
+    config_train,
+    cg_level_start=1,
+    cg_level_end=2,
+    shuffle=True,
+    cg_ref_file=None,
 ):
 
-    datafile = os.path.join(datapath, "L{0:d}b{1:.4e}.h5".format(L, beta))
+    cg_method = config_ising["cg_method"]
+    cg_factor = config_ising["cg_factor"]
+
+    for cg_level in range(cg_level_start, cg_level_end + 1):
+        outdata = {}
+        labels = {}
+
+        with h5py.File(datafile, "r") as dset:
+            if cg_level == 0:
+                images = dset["images"]
+                imagesets, exp_ediffs = coarse_grain(
+                    config_ising["L"],
+                    config_ising["beta"],
+                    cg_method,
+                    cg_factor,
+                    images,
+                )
+                images_flipped = imagesets[1]
+            else:
+                group = str(cg_level) + "/" + cg_method + "/" + str(cg_factor)
+                images = dset[group]["images"]
+                images_flipped = dset[group]["images_flipped"]
+                exp_ediffs = dset[group]["exp_ediffs"]
+
+            num_samples = images.len()
+            idx = np.arange(num_samples)
+            if shuffle:
+                np.random.shuffle(idx)
+            imagedata = split_train_val_test(images, config_train, idx)
+            imagedata_flipped = split_train_val_test(images_flipped, config_train, idx)
+        # Concatentate
+        for key in imagedata:
+            outdata[cg_level][key] = [imagedata, imagedata_flipped]
+
+        labels[cg_level] = split_train_val_test(exp_ediffs, config_train, idx)
+
+    if cg_ref_file:
+        with h5py.File(datafile, "r") as dset:
+            cg_exp_ediffs = compute_exact_cg(config_ising, dset, cg_ref_file)
+            exact_labels = split_train_val_test(cg_exp_ediffs, config_train, idx)
+
+        return outdata, labels, exact_labels
+
+    return outdata, labels
+
+
+def split_train_val_test(h5data, config_train, idx):
+
+    train_split = config_train["train_split"]
+    val_split = config_train["val_split"]
+
+    num_samples = h5data.len()
+    num_train = int(num_samples * (train_split - train_split * val_split))
+    num_val = int(num_samples * train_split * val_split)
+    num_test = num_samples - num_train - num_val
+
+    idx_train = sorted(idx[:num_train])
+    idx_val = sorted(idx[num_train : num_train + num_val])
+    idx_test = sorted(idx[-num_test:])
+
+    if num_val:
+        return {
+            "train": h5data[idx_train],
+            "val": h5data[idx_val],
+            "test": h5data[idx_test],
+        }
+
+    return {"train": h5data[idx_train], "test": h5data[idx_test]}
+
+
+def create_cg_dataset(config_ising, datafile, cg_level_start, cg_level_end):
+
+    L = config_ising["L"]
+    beta = config_ising["beta"]
+    cg_method = config_ising["cg_method"]
+    cg_factor = config_ising["cg_factor"]
+
     with h5py.File(datafile, "r+") as dset:
         if cg_level_start == 0:
             imagearray = dset["images"][:, :]
         else:
-            cgpath = str(cg_level_start) + "/" + cg_method + "/" + cg_factor + "/"
+            cgpath = str(cg_level_start) + "/" + cg_method + "/" + str(cg_factor) + "/"
             imagearray = dset[cgpath + "images"][:, :]
 
-        for flipidx in range(cg_level_end - cg_level_end - 1):
+        for flipidx in range(cg_level_end - cg_level_start):
+            cgL = int(L / (cg_factor)**(cg_level_start + flipidx))
+            print("Coarse graining from", cgL , "to", int(cgL / cg_factor))
             cg_images, exp_ediff = coarse_grain(
-                L, beta, cg_method, cg_factor, imagearray
+                cgL, beta, cg_method, cg_factor, imagearray
             )
             h5py_create_data_catch(
                 dset,
@@ -36,19 +120,25 @@ def create_cg_dataset(
             )
             if cg_level_start == 0 and flipidx == 0:
                 h5py_create_data_catch(
-                    dset, ["1", cg_method, str(cg_factor)], "exp_ediff", data=exp_ediff
+                    dset, ["1", cg_method, str(cg_factor)], "exp_ediffs", data=exp_ediff
                 )
+            imagearray = cg_images[0]
 
 
-def compute_exact_cg(L, beta, cg_method, cg_factor, dset, cg_level, cg_ref_file):
+def compute_exact_cg(config_ising, dset, cg_ref_file):
 
-    cg_path = str(cg_level) + "/" + cg_method + "/" + cg_factor + "/"
+    L = config_ising["L"]
+    beta = config_ising["beta"]
+    cg_method = config_ising["cg_method"]
+    cg_factor = config_ising["cg_factor"]
+
+    cg_path = "1/" + cg_method + "/" + cg_factor + "/"
     cgimage = dset[cg_path + "images"]
     cgimageflip = dset[cg_path + "images_flipped"]
 
-    cgref_dset = h5py.File(cg_ref_file, "r")
-    cgref_ss = cgref_dset["images"]
-    cgref_e = cgref_dset["energies"][:] / beta
+    with h5py.File(cg_ref_file, "r") as cgref_dset:
+        cgref_ss = cgref_dset["images"][:, :]
+        cgref_e = cgref_dset["energies"][:] / beta
 
     cg_e = lookup_cg_e(L, beta, cg_factor, cgimage, cgref_ss, cgref_e)
     cg_e_flip = lookup_cg_e(L, beta, cg_factor, cgimageflip, cgref_ss, cgref_e)
@@ -151,11 +241,17 @@ def h5py_create_data_catch(dset, grouplist, name, data, dtype=None):
     if dtype is None:
         dtype = data.dtype
 
-    group = dset["/".join(grouplist)]
+    try:
+        group = dset.create_group("/".join(grouplist))
+        print("Group", "/".join(grouplist), "created")
+    except ValueError as error:
+        print("Group", "/".join(grouplist), "already exists")
+        group = dset["/".join(grouplist)]
 
     try:
         group.create_dataset(name, data=data, dtype=dtype)
         print("Coarse-grained data created,", name)
     except RuntimeError as error:
-        print(error)
-        print("Coarse-grained data likely already created,", name)
+        print("Coarse-grained data likely already created,", name + ",", "overwriting")
+        del group[name]
+        group.create_dataset(name, data=data, dtype=dtype)

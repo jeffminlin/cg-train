@@ -35,7 +35,7 @@ def create_default_config_train():
     return config
 
 
-def train(model_group, datasets, labels, config_train, logdir, freeze=False):
+def train(model_group, datasets, labels, config_train, cg_level, logdir, freeze=False):
 
     weightfile = os.path.join(logdir, "weights.h5")
     if freeze:
@@ -55,12 +55,17 @@ def train(model_group, datasets, labels, config_train, logdir, freeze=False):
     callback_list = [best_weight, early_stop]
 
     # Train neural net
+    if datasets.get("val"):
+        val_data = (datasets["val"], labels["val"])
+    else:
+        val_data = None
+
     model_group.ediff.compile(loss="mean_squared_error", optimizer="Nadam")
     history = model_group.ediff.fit(
-        datasets["train"],
-        labels["train"],
+        datasets[cg_level]["train"],
+        labels[cg_level]["train"],
         verbose=config_train["verbosity"],
-        validation_split=config_train["val_split"],
+        validation_data=val_data,
         epochs=config_train["nepochs"],
         callbacks=callback_list,
     )
@@ -80,7 +85,9 @@ def train_and_save(
     exact_labels=None,
 ):
 
-    history = train(model_group, datasets, labels, config_train, logdir, freeze)
+    history = train(
+        model_group, datasets, labels, config_train, cg_level_start, logdir, freeze
+    )
     save_loss(history, logdir)
     compute_rg_metrics(model_group, datasets, labels, cg_level_start, cg_level_end)
     if exact_labels:
@@ -116,8 +123,8 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
         outputs=models.energy.get_layer(name="sum_over_spins").output,
     )
     nn = {}
-    nn["fine"] = nn_basis.predict(datasets["test"][cg_level_start])
-    nn["coarse"] = nn_basis.predict(datasets["test"][cg_level_end])
+    nn["fine"] = nn_basis.predict(datasets[cg_level_start]["test"])
+    nn["coarse"] = nn_basis.predict(datasets[cg_level_end]["test"])
 
     for key in nn:
         metrics["rg"]["sing_values_" + key] = np.linalg.svd(nn[key], compute_uv=False)
@@ -136,7 +143,7 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
     metrics["critical_exp"] = criticalexp
 
     metricfile = os.path.join(logdir, "metrics.json")
-    with open(metricfile, "w") as outfile:
+    with open_or_create(metricfile, "w") as outfile:
         json.dump(metrics, outfile)
 
 
@@ -158,7 +165,7 @@ def compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir
         metrics[key]["noise_var"] = np.var(noise_train)
 
     metricfile = os.path.join(logdir, "metrics_exact.json")
-    with open(metricfile, "w") as outfile:
+    with open_or_create(metricfile, "w") as outfile:
         json.dump(metrics, outfile)
 
 
@@ -179,5 +186,11 @@ def save_loss(history, logdir):
     plt.savefig(os.path.join(logdir, "loss.png"), bbox_inches="tight")
 
     lossfile = os.path.join(logdir, "loss.json")
-    with open(lossfile, "w") as outfile:
+    with open_or_create(lossfile, "w") as outfile:
         json.dump(history.history, outfile)
+
+
+def open_or_create(path, option):
+
+    os.makedirs(path, exist_ok=True)
+    return open(path, option)

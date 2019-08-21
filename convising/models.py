@@ -55,7 +55,7 @@ def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activ
     M_lincomb = tf.keras.layers.Dense(
         1, activation="linear", use_bias=False, name="combine_basis"
     )(M_sum)
-    model_energy = tf.keras.Model(inputs=M_in, outputs=M_lincomb, name="hamiltonian")
+    model_energy = tf.keras.Model(inputs=M_in, outputs=M_lincomb, name="deep_energy")
 
     return model_energy
 
