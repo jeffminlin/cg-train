@@ -68,50 +68,64 @@ def train(model_group, datasets, labels, config_train, logdir, freeze=False):
     return history
 
 
-def compute_rg_metrics(
-    model_group, datasets, labels, cg_level_start, cg_level_end, logdir
+def train_and_save(
+    model_group,
+    datasets,
+    labels,
+    config_train,
+    logdir,
+    cg_level_start=1,
+    cg_level_end=2,
+    freeze=False,
+    exact_labels=None,
 ):
+
+    history = train(model_group, datasets, labels, config_train, logdir, freeze)
+    save_loss(history, logdir)
+    compute_rg_metrics(model_group, datasets, labels, cg_level_start, cg_level_end)
+    if exact_labels:
+        compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir)
+
+
+def compute_stat_avg(first_samples, second_samples):
+
+    average_first = np.average(first_samples, axis=0).reshape(1, -1)
+    average_second = np.average(second_samples, axis=0).reshape(1, -1)
+    M = np.matmul(first_samples.transpose(), second_samples) / second_samples.shape[0]
+    M = M - np.matmul(average_first.transpose(), average_second)
+
+    return M
+
+
+def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, logdir):
 
     metrics = {}
 
     metrics["keras"] = {}
-    metrics["keras"]["evaluate_names"] = model_group.ediff.metrics_names
-    metrics["keras"]["ediff_loss_train"] = model_group.ediff.evaluate(
-        datasets["train"][1], labels["train"][1], verbose=0
-    )
-    metrics["keras"]["ediff_loss_test"] = model_group.ediff.evaluate(
-        datasets["test"][1], labels["test"][1], verbose=0
-    )
+    metrics["keras"]["evaluate_names"] = models.ediff.metrics_names
+    for key in datasets:
+        metrics["keras"]["ediff_loss_" + key] = models.ediff.evaluate(
+            datasets[key][1], labels[key][1], verbose=0
+        )
 
     metrics["rg"] = {}
     metrics["rg"]["cg_level_start"] = cg_level_start
     metrics["rg"]["cg_level_end"] = cg_level_end
     nn_basis = tf.keras.Model(
-        inputs=model_group.energy.layers[0].input,
-        outputs=model_group.energy.get_layer(name="sum_over_spins").output,
+        inputs=models.energy.layers[0].input,
+        outputs=models.energy.get_layer(name="sum_over_spins").output,
     )
-    nn_fine = nn_basis.predict(datasets["test"][cg_level_start])
-    nn_coarse = nn_basis.predict(datasets["test"][cg_level_end])
+    nn = {}
+    nn["fine"] = nn_basis.predict(datasets["test"][cg_level_start])
+    nn["coarse"] = nn_basis.predict(datasets["test"][cg_level_end])
 
-    metrics["rg"]["sing_values_fine"] = np.linalg.svd(nn_fine, compute_uv=False)
-    metrics["rg"]["condition_num_fine"] = np.linalg.cond(nn_fine)
+    for key in nn:
+        metrics["rg"]["sing_values_" + key] = np.linalg.svd(nn[key], compute_uv=False)
+        metrics["rg"]["condition_num_" + key] = np.linalg.cond(nn[key])
 
-    metrics["rg"]["sing_values_coarse"] = np.linalg.svd(nn_coarse, compute_uv=False)
-    metrics["rg"]["condition_num_coarse"] = np.linalg.cond(nn_coarse)
-
-    coarse_avg = np.average(nn_coarse, axis=0)
-    coarse_avg = coarse_avg.reshape(1, -1)
-
-    fine_avg = np.average(nn_fine, axis=0)
-    fine_avg = fine_avg.reshape(1, -1)
-
-    Mcc = np.matmul(nn_coarse.transpose(), nn_coarse) / nn_coarse.shape[0] - np.matmul(
-        coarse_avg.transpose(), coarse_avg
-    )
+    Mcc = compute_stat_avg(nn["coarse"], nn["coarse"])
     cc_cond = np.linalg.cond(Mcc)
-    Mcf = np.matmul(nn_coarse.transpose(), nn_fine) / nn_coarse.shape[0] - np.matmul(
-        coarse_avg.transpose(), fine_avg
-    )
+    Mcf = compute_stat_avg(nn["coarse"], nn["fine"])
 
     J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
     J_eigs, _ = np.linalg.eig(J)
@@ -126,37 +140,44 @@ def compute_rg_metrics(
         json.dump(metrics, outfile)
 
 
+def compute_mse(predictions, exact_labels):
+
+    return np.mean(np.square(predictions - exact_labels))
+
+
 def compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir):
 
     metrics = {}
+    predict = {}
 
-    predict_train = model_group.ediff.predict(datasets["train"][1])
-    predict_test = model_group.ediff.predict(datasets["test"][1])
-    metrics["train"]["loss"] = np.mean(np.square(predict_train - exact_labels["train"]))
-    metrics["test"]["loss"] = np.mean(np.square(predict_test - exact_labels["test"]))
+    for key in datasets:
+        predict[key] = model_group.ediff.predict(datasets[key][1])
+        metrics[key]["loss"] = compute_mse(predict[key], exact_labels[key])
 
-    noise_train = labels["train"][1] - exact_labels["train"]
-    noise_test = labels["test"][1] - exact_labels["test"]
-    metrics["train"]["noise_var"] = np.var(noise_train)
-    metrics["test"]["noise_var"] = np.var(noise_test)
+        noise_train = labels[key][1] - exact_labels[key]
+        metrics[key]["noise_var"] = np.var(noise_train)
 
     metricfile = os.path.join(logdir, "metrics_exact.json")
     with open(metricfile, "w") as outfile:
         json.dump(metrics, outfile)
 
 
-def graph_loss(history, logdir):
+def save_loss(history, logdir):
+
+    min_loss = np.min(history.history["loss"])
+    min_val_loss = np.min(history.history["val_loss"])
+    shifted_loss = history.history["loss"]
+    shifted_val_loss = history.history["val_loss"]
+
     plt.figure(1)
     plt.xlabel("epoch")
-    plt.ylabel("loss")
+    plt.ylabel("loss, shifted")
     plt.yscale("log")
-    plt.plot(
-        history.history["loss"] - np.min(history.history["loss"]), ".-", label="loss"
-    )
-    plt.plot(
-        history.history["val_loss"] - np.min(history.history["val_loss"]),
-        ".-",
-        label="val_loss",
-    )
+    plt.plot(shifted_loss, ".-", label="loss, min = {.5f}".format(min_loss))
+    plt.plot(shifted_val_loss, ".-", label="val_loss, min = {.5f}".format(min_val_loss))
     plt.legend()
     plt.savefig(os.path.join(logdir, "loss.png"), bbox_inches="tight")
+
+    lossfile = os.path.join(logdir, "loss.json")
+    with open(lossfile, "w") as outfile:
+        json.dump(history.history, outfile)

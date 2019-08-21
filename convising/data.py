@@ -1,109 +1,60 @@
+import os
+
 import h5py
 import numpy as np
 
 
-def create_cg_dataset(config_ising, config_train, start_cg, end_cg):
-    with h5py.File(config_train["datafile"], "r+") as dset:
-        if start_cg == 0:
+def create_cg_dataset(
+    L, beta, cg_method, cg_factor, datapath, cg_level_start, cg_level_end
+):
+
+    datafile = os.path.join(datapath, "L{0:d}b{1:.4e}.h5".format(L, beta))
+    with h5py.File(datafile, "r+") as dset:
+        if cg_level_start == 0:
             imagearray = dset["images"][:, :]
         else:
-            imagearray = dset[
-                "".join(
-                    [
-                        "cgimage",
-                        str(start_cg),
-                        "_",
-                        config_ising["cg_method"],
-                        str(config_ising["cg_factor"]),
-                    ]
-                )
-            ]
+            cgpath = str(cg_level_start) + "/" + cg_method + "/" + cg_factor + "/"
+            imagearray = dset[cgpath + "images"][:, :]
 
-        for flipidx in range(end_cg - start_cg - 1):
+        for flipidx in range(cg_level_end - cg_level_end - 1):
             cg_images, exp_ediff = coarse_grain(
-                config_ising["L"],
-                config_ising["beta"],
-                config_ising["cg_method"],
-                config_ising["cgf"],
-                imagearray,
+                L, beta, cg_method, cg_factor, imagearray
             )
-            cgimage = cg_images[0]
-            cgimageflip = cg_images[1]
-
             h5py_create_data_catch(
                 dset,
-                "".join(
-                    [
-                        "cgimage",
-                        str(start_cg + flipidx + 1),
-                        "_",
-                        config_ising["cg_method"],
-                        str(config_ising["cg_factor"]),
-                    ]
-                ),
-                data=cgimage,
+                [str(cg_level_start + flipidx + 1), cg_method, str(cg_factor)],
+                "images",
+                data=cg_images[0],
                 dtype="i1",
             )
             h5py_create_data_catch(
                 dset,
-                "".join(
-                    [
-                        "cgimageflip",
-                        str(start_cg + flipidx + 1),
-                        "_",
-                        config_ising["cg_method"],
-                        str(config_ising["cg_factor"]),
-                    ]
-                ),
-                data=cgimageflip,
+                [str(cg_level_start + flipidx + 1), cg_method, str(cg_factor)],
+                "images_flipped",
+                data=cg_images[1],
                 dtype="i1",
             )
-            if start_cg == 0 and flipidx == 0:
+            if cg_level_start == 0 and flipidx == 0:
                 h5py_create_data_catch(
-                    dset,
-                    "".join(
-                        [
-                            "exp_ediff1_",
-                            config_ising["cg_method"],
-                            str(config_ising["cg_factor"]),
-                        ]
-                    ),
-                    data=exp_ediff,
+                    dset, ["1", cg_method, str(cg_factor)], "exp_ediff", data=exp_ediff
                 )
 
-            imagearray = cgimage
 
+def compute_exact_cg(L, beta, cg_method, cg_factor, dset, cg_level, cg_ref_file):
 
-def compute_exact_cg(dset, cg_ref_file, config_ising):
-    cgimage = dset[
-        "".join(["cgimage_", config_ising["cg_method"], str(config_ising["cg_factor"])])
-    ]
-    cgimageflip = dset[
-        "".join(
-            ["cgimageflip_", config_ising["cg_method"], str(config_ising["cg_factor"])]
-        )
-    ]
+    cg_path = str(cg_level) + "/" + cg_method + "/" + cg_factor + "/"
+    cgimage = dset[cg_path + "images"]
+    cgimageflip = dset[cg_path + "images_flipped"]
+
     cgref_dset = h5py.File(cg_ref_file, "r")
     cgref_ss = cgref_dset["images"]
-    cgref_e = cgref_dset["energies"][:] / config_ising["beta"]
+    cgref_e = cgref_dset["energies"][:] / beta
 
-    cg_e = lookup_cg_e(
-        config_ising["L"],
-        config_ising["beta"],
-        config_ising["cg_factor"],
-        cgimage,
-        cgref_ss,
-        cgref_e,
-    )
-    cg_e_flip = lookup_cg_e(
-        config_ising["L"],
-        config_ising["beta"],
-        config_ising["cg_factor"],
-        cgimageflip,
-        cgref_ss,
-        cgref_e,
-    )
-    cg_exp_ediff = np.exp(-config_ising["beta"] * (cg_e_flip - cg_e))
+    cg_e = lookup_cg_e(L, beta, cg_factor, cgimage, cgref_ss, cgref_e)
+    cg_e_flip = lookup_cg_e(L, beta, cg_factor, cgimageflip, cgref_ss, cgref_e)
+    cg_exp_ediff = np.exp(-beta * (cg_e_flip - cg_e))
+
+    return cg_exp_ediff
 
 
 def coarse_grain(L, beta, cg_method, cgf, image):
@@ -120,6 +71,14 @@ def coarse_grain(L, beta, cg_method, cgf, image):
     return ([cgimage, cgimageflip], exp_ediff)
 
 
+def shift_flipidx(L, flipidx, shiftarr):
+
+    numdat = flipidx.shape[1]
+    outidx = np.insert((flipidx + shiftarr) % [[L], [L]], 0, range(numdat), axis=0)
+
+    return tuple(outidx)
+
+
 def cg_ediff(L, beta, cg_method, cgf, image, flipidx):
 
     numdat = len(image)
@@ -128,64 +87,16 @@ def cg_ediff(L, beta, cg_method, cgf, image, flipidx):
         ediff = 2 * (
             image[tuple(np.insert(flipidx, 0, range(numdat), axis=0))]
             * np.sum(
-                [
-                    image[
-                        tuple(
-                            np.insert(
-                                (flipidx + shift) % [[L], [L]], 0, range(numdat), axis=0
-                            )
-                        )
-                    ]
-                    for shift in addidx
-                ],
-                axis=0,
+                [image[shift_flipidx(L, flipidx, shift)] for shift in addidx], axis=0
             )
         )
     elif cg_method == "maj":
         ediff = 2 * np.sum(
             [
-                image[
-                    tuple(
-                        np.insert(
-                            (flipidx + np.array([[blkshift], [shift]])) % [[L], [L]],
-                            0,
-                            range(numdat),
-                            axis=0,
-                        )
-                    )
-                ]
-                * image[
-                    tuple(
-                        np.insert(
-                            (flipidx + np.array([[blkshift - 1], [shift]]))
-                            % [[L], [L]],
-                            0,
-                            range(numdat),
-                            axis=0,
-                        )
-                    )
-                ]
-                + image[
-                    tuple(
-                        np.insert(
-                            (flipidx + np.array([[shift], [blkshift]])) % [[L], [L]],
-                            0,
-                            range(numdat),
-                            axis=0,
-                        )
-                    )
-                ]
-                * image[
-                    tuple(
-                        np.insert(
-                            (flipidx + np.array([[shift - 1], [blkshift]]))
-                            % [[L], [L]],
-                            0,
-                            range(numdat),
-                            axis=0,
-                        )
-                    )
-                ]
+                image[shift_flipidx(L, flipidx, np.array([[blkshift], [shift]]))]
+                * image[shift_flipidx(L, flipidx, np.array([[blkshift - 1], [shift]]))]
+                + image[shift_flipidx(L, flipidx, np.array([[shift], [blkshift]]))]
+                * image[shift_flipidx(L, flipidx, np.array([[shift - 1], [blkshift]]))]
                 for blkshift in [0, cgf]
                 for shift in range(cgf)
             ],
@@ -200,28 +111,26 @@ def cg_ediff(L, beta, cg_method, cgf, image, flipidx):
 def cg_imageflip(L, cg_method, cgf, image, cgflipidx):
 
     numdat = len(image)
+    # Decimate
     cgimage = image[:, 0::cgf, 0::cgf]
+
+    # If majority rule, replace cgimage elements with the sign of the sum of blocks
     if cg_method == "maj":
         for cgidx, _ in np.ndenumerate(cgimage[0]):
-            cgimage[(slice(None), *cgidx)] = np.sign(
-                np.sum(
-                    image[
-                        :,
-                        (cgidx[0] * cgf) : ((cgidx[0] + 1) * cgf),
-                        (cgidx[1] * cgf) : ((cgidx[1] + 1) * cgf),
-                    ],
-                    axis=(1, 2),
-                )
-            )
+            cgblock = image[
+                :,
+                (cgidx[0] * cgf) : ((cgidx[0] + 1) * cgf),
+                (cgidx[1] * cgf) : ((cgidx[1] + 1) * cgf),
+            ]
+            cgimage[(slice(None), *cgidx)] = np.sign(np.sum(cgblock, axis=(1, 2)))
         ss_zero_idx = cgimage == 0
         nnz = np.count_nonzero(ss_zero_idx)
         rand_ss = np.random.choice([-1, 1], nnz)
         cgimage[ss_zero_idx] = rand_ss
 
+    # Flip the given cg indices
     cgimageflip = np.copy(cgimage)
-    cgimageflip[tuple(np.insert(cgflipidx, 0, range(numdat), axis=0))] = cgimageflip[
-        tuple(np.insert(cgflipidx, 0, range(numdat), axis=0))
-    ] * (-1)
+    cgimageflip[tuple(np.insert(cgflipidx, 0, range(numdat), axis=0))] *= -1
 
     return cgimage, cgimageflip
 
@@ -237,98 +146,16 @@ def lookup_cg_e(L, beta, cgf, cgimage, cgref_ss, cgref_e):
     return cg_e
 
 
-class GeneratorIsing(tf.keras.utils.Sequence):
-    """Class for feeding data to the fit_generator method of a Keras model.
-
-    Args:
-        dset
-            h5 data with "cgimages" and "ediff" datasets containing
-            coarse-grained Ising configurations
-        config (Config)
-            instance of Config class
-        set (str)
-            whether to give training ("train"), validation ("val"),
-            or testing ("test") samples
-
-    """
-
-    def __init__(self, dset, config, num_cg, shuffle=True, set="test", flip=True):
-        self.exp_ediff = dset[
-            "".join(["exp_ediff1_", config.cg_method, str(config.cg_factor)])
-        ]
-        numdat = int(len(self.exp_ediff) * config.keep)
-        num_train = int(numdat * config.train_split * (1 - config.val_split))
-        num_val = int(numdat * config.train_split * config.val_split)
-        num_test = numdat - num_train - num_val
-        if set == "train":
-            self.idxset = np.arange(num_train)
-        elif set == "val":
-            self.idxset = np.arange(num_val) + num_train
-        else:
-            self.idxset = np.arange(num_test) + num_train + num_val
-        self.num_samples = len(self.idxset)
-
-        self.image = dset[
-            "".join(
-                ["cgimage", str(num_cg), "_", config.cg_method, str(config.cg_factor)]
-            )
-        ][self.idxset, :, :]
-        self.imageflip = dset[
-            "".join(
-                [
-                    "cgimageflip",
-                    str(num_cg),
-                    "_",
-                    config.cg_method,
-                    str(config.cg_factor),
-                ]
-            )
-        ][self.idxset, :, :]
-        self.exp_ediff = self.exp_ediff[self.idxset.tolist()]
-
-        self.flip = flip
-        self.indexes = np.arange(self.num_samples)
-        self.batch_size = config.batch_size
-        self.shuffle = shuffle
-        self.on_epoch_end()
-
-    def __len__(self):
-        return int(np.floor(self.num_samples / float(self.batch_size)))
-
-    def __getitem__(self, idx):
-        # Generate unprocessed batch
-        batch_image = self.image[
-            self.indexes[idx * self.batch_size : (idx + 1) * self.batch_size].tolist(),
-            :,
-            :,
-        ]
-        batch_imageflip = self.imageflip[
-            self.indexes[idx * self.batch_size : (idx + 1) * self.batch_size].tolist(),
-            :,
-            :,
-        ]
-        batch_ediff = self.exp_ediff[
-            self.indexes[idx * self.batch_size : (idx + 1) * self.batch_size].tolist()
-        ]
-
-        if self.flip:
-            return ([batch_image, batch_imageflip], batch_ediff)
-        else:
-            return ([batch_image], batch_ediff)
-
-    def on_epoch_end(self):
-        if self.shuffle == True:
-            np.random.shuffle(self.indexes)
-
-
-def h5py_create_data_catch(dset, dataname, data, dtype=None):
+def h5py_create_data_catch(dset, grouplist, name, data, dtype=None):
 
     if dtype is None:
         dtype = data.dtype
 
+    group = dset["/".join(grouplist)]
+
     try:
-        dset.create_dataset(dataname, data=data, dtype=dtype)
-        print("Coarse-grained data created,", dataname)
+        group.create_dataset(name, data=data, dtype=dtype)
+        print("Coarse-grained data created,", name)
     except RuntimeError as error:
         print(error)
-        print("Coarse-grained data likely already created,", dataname)
+        print("Coarse-grained data likely already created,", name)
