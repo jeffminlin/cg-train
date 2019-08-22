@@ -29,7 +29,7 @@ def run(L, datapath, logdir):
     datafile = os.path.join(
         datapath, "L{0:d}b{1:.4e}.h5".format(L, config_ising["beta"])
     )
-    # data.create_cg_dataset(config_ising, datafile, 0, 2)
+    data.create_cg_dataset(config_ising, datafile, 0, 2)
     datasets, labels = data.load_datasets(
         datafile, config_ising, config_train, shuffle=False
     )

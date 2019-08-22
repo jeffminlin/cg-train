@@ -38,7 +38,7 @@ def load_datasets(
                 images = dset[group]["images"][:, :, :]
                 images_flipped = dset[group]["images_flipped"][:, :, :]
 
-            num_samples = int(len(images) * config_train["keep"])
+            num_samples = int(len(images) * config_train["keep_data"])
             idx = np.arange(num_samples)
             if shuffle:
                 np.random.shuffle(idx)
