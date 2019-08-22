@@ -81,6 +81,7 @@ def train_and_save(
     model_group,
     datasets,
     labels,
+    config_ising,
     config_train,
     logdir,
     cg_level_start=1,
@@ -103,6 +104,7 @@ def train_and_save(
         cg_level_start,
         cg_level_end,
         logdir,
+        config_ising,
         config_train,
     )
     if exact_labels:
@@ -124,7 +126,14 @@ def compute_stat_avg(first_samples, second_samples):
 
 
 def compute_rg_metrics(
-    models, datasets, labels, cg_level_start, cg_level_end, logdir, config_train
+    models,
+    datasets,
+    labels,
+    cg_level_start,
+    cg_level_end,
+    logdir,
+    config_ising,
+    config_train,
 ):
 
     metrics = {}
@@ -146,7 +155,7 @@ def compute_rg_metrics(
     nn_basis = tf.keras.Model(
         inputs=models.energy.layers[0].input,
         outputs=models.energy.get_layer("sum_over_spins").output,
-        name="nn_basis"
+        name="nn_basis",
     )
     nn = {}
     nn["fine"] = nn_basis.predict(
@@ -170,12 +179,13 @@ def compute_rg_metrics(
     cc_cond = np.linalg.cond(Mcc)
     Mcf = compute_stat_avg(nn["coarse"], nn["fine"])
 
-    J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
+    J = np.linalg.lstsq(Mcc.transpose(), Mcf.transpose(), rcond=None)[0].transpose()
     J_eigs, _ = np.linalg.eig(J)
-    criticalexp = np.log(2) / np.log(np.max(np.real(J_eigs)))
+    J_eigs.sort()
+    criticalexp = np.log(config_ising["cg_factor"]) / np.log(np.real(J_eigs)[1])
     metrics["condition_number_of_Mcc"] = float(cc_cond)
     metrics["jacobian"] = J.tolist()
-    metrics["jacobian_eigs"] = J_eigs.tolist()
+    metrics["jacobian_eigs"] = [str(i) for i in J_eigs.tolist()]
     metrics["critical_exp"] = float(criticalexp)
 
     with open_or_create(logdir, "metrics.json", "w") as outfile:
