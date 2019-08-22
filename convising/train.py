@@ -97,13 +97,19 @@ def train_and_save(
     save_loss(history, logdir)
     print("Saving metrics")
     compute_rg_metrics(
-        model_group, datasets, labels, cg_level_start, cg_level_end, logdir
+        model_group,
+        datasets,
+        labels,
+        cg_level_start,
+        cg_level_end,
+        logdir,
+        config_train,
     )
     if exact_labels:
         print("Saving exact metrics")
         compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir)
 
-    modelpath = os.path.join(logdir, "model")
+    modelpath = os.path.join(logdir, "model.h5")
     model_group.energy.save(modelpath)
 
 
@@ -117,7 +123,9 @@ def compute_stat_avg(first_samples, second_samples):
     return M
 
 
-def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, logdir):
+def compute_rg_metrics(
+    models, datasets, labels, cg_level_start, cg_level_end, logdir, config_train
+):
 
     metrics = {}
 
@@ -126,7 +134,10 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
         metrics["keras"]["evaluate_names"] = models.ediff.metrics_names
         for key in datasets[1]:
             metrics["keras"]["ediff_loss_" + key] = models.ediff.evaluate(
-                datasets[1][key], labels[key], verbose=0
+                datasets[1][key],
+                labels[key],
+                batch_size=config_train["batch_size"],
+                verbose=config_train["verbosity"],
             )
 
     metrics["rg"] = {}
@@ -134,11 +145,20 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
     metrics["rg"]["cg_level_end"] = cg_level_end
     nn_basis = tf.keras.Model(
         inputs=models.energy.layers[0].input,
-        outputs=models.energy.get_layer(name="sum_over_spins").output,
+        outputs=models.energy.get_layer("sum_over_spins").output,
+        name="nn_basis"
     )
     nn = {}
-    nn["fine"] = nn_basis.predict(datasets[cg_level_start]["test"])
-    nn["coarse"] = nn_basis.predict(datasets[cg_level_end]["test"])
+    nn["fine"] = nn_basis.predict(
+        datasets[cg_level_start]["test"],
+        batch_size=config_train["batch_size"],
+        verbose=config_train["verbosity"],
+    )
+    nn["coarse"] = nn_basis.predict(
+        datasets[cg_level_end]["test"],
+        batch_size=config_train["batch_size"],
+        verbose=config_train["verbosity"],
+    )
 
     for key in nn:
         metrics["rg"]["sing_values_" + key] = np.linalg.svd(
@@ -159,7 +179,7 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
     metrics["critical_exp"] = float(criticalexp)
 
     with open_or_create(logdir, "metrics.json", "w") as outfile:
-        json.dump(metrics, outfile)
+        json.dump(metrics, outfile, indent=4)
 
 
 def compute_mse(predictions, exact_labels):
@@ -180,7 +200,7 @@ def compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir
         metrics[key]["noise_var"] = float(np.var(noise))
 
     with open_or_create(logdir, "metrics_exact.json", "w") as outfile:
-        json.dump(metrics, outfile)
+        json.dump(metrics, outfile, indent=4)
 
 
 def save_loss(history, logdir):
@@ -202,7 +222,7 @@ def save_loss(history, logdir):
     plt.savefig(os.path.join(logdir, "loss.png"), bbox_inches="tight")
 
     with open_or_create(logdir, "loss.json", "w") as outfile:
-        json.dump(history.history, outfile)
+        json.dump(history.history, outfile, indent=4)
 
 
 def open_or_create(path, filename, option):

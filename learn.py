@@ -20,7 +20,8 @@ def run(L, datapath, logdir):
     print("Ising configuration:", config_ising)
     config_train = train.create_default_config_train()
     config_train["verbosity"] = 1
-    config_train["patience"] = 50
+    config_train["patience"] = 2
+    config_train["keep_data"] = 1
     if len(sys.argv) > 1:
         config_train["batch_size"] = int(sys.argv[1])
     print("Train configuration:", config_train)
@@ -29,7 +30,7 @@ def run(L, datapath, logdir):
     datafile = os.path.join(
         datapath, "L{0:d}b{1:.4e}.h5".format(L, config_ising["beta"])
     )
-    data.create_cg_dataset(config_ising, datafile, 0, 2)
+    # data.create_cg_dataset(config_ising, datafile, 0, 2)
     datasets, labels = data.load_datasets(
         datafile, config_ising, config_train, shuffle=False
     )

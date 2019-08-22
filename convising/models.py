@@ -38,7 +38,7 @@ def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activ
         M_fc = tf.keras.layers.Dense(
             dense_nodes[0], activation=dense_activation, use_bias=True, name="dense_0"
         )(M_conv)
-        for nodenum, idx in enumerate(dense_nodes[1:]):
+        for idx, nodenum in enumerate(dense_nodes[1:]):
             M_fc = tf.keras.layers.Dense(
                 nodenum,
                 activation=dense_activation,
