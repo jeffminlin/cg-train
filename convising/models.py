@@ -9,6 +9,14 @@ def log_cosh(x):
     return tf.math.log((tf.math.exp(x) + tf.math.exp(-x)) / 2.0)
 
 
+def get_activation(activation_name):
+
+    if activation_name == "log_cosh":
+        return log_cosh
+    else:
+        return activation_name
+
+
 def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activation):
     """RBM with additional dense layers
 
@@ -29,7 +37,7 @@ def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activ
         nfilters,
         [kernel_size, kernel_size],
         strides=(1, 1),
-        activation=conv_activation,
+        activation=get_activation(conv_activation),
         padding="valid",
         use_bias=False,
         name="convolution",
@@ -63,7 +71,7 @@ def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activ
 def linear_basis():
 
     M_in = tf.keras.layers.Input(shape=(None, None))
-    M_basis = lys.LinearBasis(name="linear_basis")(M_in)
+    M_basis = lys.LinearBasis(name="sum_over_spins")(M_in)
     M_lincomb = tf.keras.layers.Dense(
         1, activation="linear", use_bias=False, name="combine_basis"
     )(M_basis)

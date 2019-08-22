@@ -62,37 +62,37 @@ class LinearBasis(tf.keras.layers.Layer):
 
     def call(self, x):
         first_nearest = tf.expand_dims(
-            tf.sum(
+            tf.math.reduce_sum(
                 0.5
                 * (
-                    x * tf.manip.roll(x, 1, axis=1)
-                    + x * tf.manip.roll(x, -1, axis=1)
-                    + x * tf.manip.roll(x, 1, axis=2)
-                    + x * tf.manip.roll(x, -1, axis=2)
+                    x * tf.roll(x, 1, axis=1)
+                    + x * tf.roll(x, -1, axis=1)
+                    + x * tf.roll(x, 1, axis=2)
+                    + x * tf.roll(x, -1, axis=2)
                 ),
                 axis=(1, 2),
             ),
             axis=1,
         )
         second_nearest = tf.expand_dims(
-            tf.sum(
+            tf.math.reduce_sum(
                 0.5
                 * (
-                    x * tf.manip.roll(x, (1, 1), axis=(1, 2))
-                    + x * tf.manip.roll(x, (1, -1), axis=(1, 2))
-                    + x * tf.manip.roll(x, (-1, 1), axis=(1, 2))
-                    + x * tf.manip.roll(x, (-1, -1), axis=(1, 2))
+                    x * tf.roll(x, (1, 1), axis=(1, 2))
+                    + x * tf.roll(x, (1, -1), axis=(1, 2))
+                    + x * tf.roll(x, (-1, 1), axis=(1, 2))
+                    + x * tf.roll(x, (-1, -1), axis=(1, 2))
                 ),
                 axis=(1, 2),
             ),
             axis=1,
         )
         four_spins = tf.expand_dims(
-            tf.sum(
+            tf.math.reduce_sum(
                 x
-                * tf.manip.roll(x, 1, axis=1)
-                * tf.manip.roll(x, 1, axis=2)
-                * tf.manip.roll(x, (1, 1), axis=(1, 2)),
+                * tf.roll(x, 1, axis=1)
+                * tf.roll(x, 1, axis=2)
+                * tf.roll(x, (1, 1), axis=(1, 2)),
                 axis=(1, 2),
             ),
             axis=1,

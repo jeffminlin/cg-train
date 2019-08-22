@@ -19,9 +19,9 @@ def run(L, datapath, logdir):
     config_ising["cg_method"] = "deci"
     print("Ising configuration:", config_ising)
     config_train = train.create_default_config_train()
-    config_train["verbosity"] = 2
+    config_train["verbosity"] = 1
     config_train["patience"] = 20
-    config_train["keep_data"] = 1
+    config_train["keep_data"] = 0.2
     if len(sys.argv) > 1:
         config_train["batch_size"] = int(sys.argv[1])
     print("Train configuration:", config_train)
@@ -30,9 +30,14 @@ def run(L, datapath, logdir):
     datafile = os.path.join(
         datapath, "L{0:d}b{1:.4e}.h5".format(L, config_ising["beta"])
     )
-    data.create_cg_dataset(config_ising, datafile, 0, 2)
+    # data.create_cg_dataset(config_ising, datafile, 0, 2)
     datasets, labels = data.load_datasets(
-        datafile, config_ising, config_train, shuffle=False
+        datafile,
+        config_ising,
+        config_train,
+        shuffle=False,
+        cg_level_start=1,
+        cg_level_end=2,
     )
     # print some information about the data
     print("Number of training samples:", len(datasets[1]["train"][0]))
@@ -45,11 +50,19 @@ def run(L, datapath, logdir):
     config_train["batch_size"] *= strategy.num_replicas_in_sync
     with strategy.scope():
         deep_model = models.ModelGroup(config_ising, config_train)
-        deep_model.ediff.compile(loss="mse", optimizer="Adam")
+        optimizer = tf.keras.optimizers.SGD(learning_rate=0.00005, momentum=0.01)
+        deep_model.ediff.compile(loss="mse", optimizer=optimizer)
 
     deep_logdir = os.path.join(logdir, "deep")
     train.train_and_save(
-        deep_model, datasets, labels, config_ising, config_train, deep_logdir
+        deep_model,
+        datasets,
+        labels,
+        config_ising,
+        config_train,
+        deep_logdir,
+        cg_level_start=1,
+        cg_level_end=2,
     )
 
 

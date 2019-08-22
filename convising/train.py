@@ -28,11 +28,11 @@ def create_default_config_train():
         "nepochs": 1000,
         "patience": 100,
         "verbosity": 0,
-        "conv_activation": models.log_cosh,
+        "conv_activation": "log_cosh",
         "dense_activation": "elu",
         "kernel_size": 3,
         "nfilters": 4,
-        "dense_nodes": [20, 20, 4],
+        "dense_nodes": [20, 20, 3],
     }
 
     return config
@@ -92,7 +92,7 @@ def train_and_save(
 
     print("Training")
     history = train(
-        model_group, datasets, labels, config_train, cg_level_start, logdir, freeze
+        model_group, datasets, labels, config_train, 1, logdir, freeze
     )
     print("Saving training history")
     save_loss(history, logdir)
@@ -111,7 +111,7 @@ def train_and_save(
         print("Saving exact metrics")
         compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir)
 
-    modelpath = os.path.join(logdir, "model.h5")
+    modelpath = os.path.join(logdir, model_group.energy.name + ".h5")
     model_group.energy.save(modelpath)
 
 
@@ -137,6 +137,10 @@ def compute_rg_metrics(
 ):
 
     metrics = {}
+    metrics["config_ising"] = config_ising
+    metrics["config_train"] = config_train
+
+    metrics["model_name"] = models.energy.name
 
     if datasets.get(1):
         metrics["keras"] = {}
@@ -182,7 +186,7 @@ def compute_rg_metrics(
     J = np.linalg.lstsq(Mcc.transpose(), Mcf.transpose(), rcond=None)[0].transpose()
     J_eigs, _ = np.linalg.eig(J)
     J_eigs.sort()
-    criticalexp = np.log(config_ising["cg_factor"]) / np.log(np.real(J_eigs)[1])
+    criticalexp = np.log(config_ising["cg_factor"]) / np.log(np.real(J_eigs)[-1])
     metrics["condition_number_of_Mcc"] = float(cc_cond)
     metrics["jacobian"] = J.tolist()
     metrics["jacobian_eigs"] = [str(i) for i in J_eigs.tolist()]
