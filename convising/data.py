@@ -16,10 +16,11 @@ def load_datasets(
 
     cg_method = config_ising["cg_method"]
     cg_factor = config_ising["cg_factor"]
+    outdata = {}
+    labels = {}
 
     for cg_level in range(cg_level_start, cg_level_end + 1):
-        outdata = {}
-        labels = {}
+        outdata[cg_level] = {}
 
         with h5py.File(datafile, "r") as dset:
             if cg_level == 0:
@@ -34,27 +35,32 @@ def load_datasets(
                 images_flipped = imagesets[1]
             else:
                 group = str(cg_level) + "/" + cg_method + "/" + str(cg_factor)
-                images = dset[group]["images"]
-                images_flipped = dset[group]["images_flipped"]
-                exp_ediffs = dset[group]["exp_ediffs"]
+                images = dset[group]["images"][:, :, :]
+                images_flipped = dset[group]["images_flipped"][:, :, :]
 
-            num_samples = images.len()
+            num_samples = int(len(images) * config_train["keep"])
             idx = np.arange(num_samples)
             if shuffle:
                 np.random.shuffle(idx)
             imagedata = split_train_val_test(images, config_train, idx)
             imagedata_flipped = split_train_val_test(images_flipped, config_train, idx)
-        # Concatentate
-        for key in imagedata:
-            outdata[cg_level][key] = [imagedata, imagedata_flipped]
 
-        labels[cg_level] = split_train_val_test(exp_ediffs, config_train, idx)
+            if cg_level == 1:
+                exp_ediffs = dset[group]["exp_ediffs"][:]
+                labels = split_train_val_test(exp_ediffs, config_train, idx)
+                if cg_ref_file:
+                    cg_exp_ediffs = compute_exact_cg(config_ising, dset, cg_ref_file)
+                    exact_labels = split_train_val_test(
+                        cg_exp_ediffs, config_train, idx
+                    )
+
+        for key in imagedata:  # Concatentate data
+            outdata[cg_level][key] = [
+                imagedata[key].astype(np.float64),
+                imagedata_flipped[key].astype(np.float64),
+            ]
 
     if cg_ref_file:
-        with h5py.File(datafile, "r") as dset:
-            cg_exp_ediffs = compute_exact_cg(config_ising, dset, cg_ref_file)
-            exact_labels = split_train_val_test(cg_exp_ediffs, config_train, idx)
-
         return outdata, labels, exact_labels
 
     return outdata, labels
@@ -62,26 +68,25 @@ def load_datasets(
 
 def split_train_val_test(h5data, config_train, idx):
 
+    datasets = {}
+
     train_split = config_train["train_split"]
     val_split = config_train["val_split"]
 
-    num_samples = h5data.len()
+    num_samples = len(idx)
     num_train = int(num_samples * (train_split - train_split * val_split))
     num_val = int(num_samples * train_split * val_split)
     num_test = num_samples - num_train - num_val
 
     idx_train = sorted(idx[:num_train])
-    idx_val = sorted(idx[num_train : num_train + num_val])
-    idx_test = sorted(idx[-num_test:])
-
+    datasets["train"] = h5data[idx_train]
     if num_val:
-        return {
-            "train": h5data[idx_train],
-            "val": h5data[idx_val],
-            "test": h5data[idx_test],
-        }
+        idx_val = sorted(idx[num_train : num_train + num_val])
+        datasets["val"] = h5data[idx_val]
+    idx_test = sorted(idx[-num_test:])
+    datasets["test"] = h5data[idx_test]
 
-    return {"train": h5data[idx_train], "test": h5data[idx_test]}
+    return datasets
 
 
 def create_cg_dataset(config_ising, datafile, cg_level_start, cg_level_end):
@@ -99,8 +104,8 @@ def create_cg_dataset(config_ising, datafile, cg_level_start, cg_level_end):
             imagearray = dset[cgpath + "images"][:, :]
 
         for flipidx in range(cg_level_end - cg_level_start):
-            cgL = int(L / (cg_factor)**(cg_level_start + flipidx))
-            print("Coarse graining from", cgL , "to", int(cgL / cg_factor))
+            cgL = int(L / ((cg_factor) ** (cg_level_start + flipidx)))
+            print("Coarse graining from", cgL, "to", int(cgL / cg_factor))
             cg_images, exp_ediff = coarse_grain(
                 cgL, beta, cg_method, cg_factor, imagearray
             )
@@ -132,7 +137,7 @@ def compute_exact_cg(config_ising, dset, cg_ref_file):
     cg_method = config_ising["cg_method"]
     cg_factor = config_ising["cg_factor"]
 
-    cg_path = "1/" + cg_method + "/" + cg_factor + "/"
+    cg_path = "1/" + cg_method + "/" + str(cg_factor) + "/"
     cgimage = dset[cg_path + "images"]
     cgimageflip = dset[cg_path + "images_flipped"]
 

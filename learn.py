@@ -1,5 +1,6 @@
 import os
 import datetime
+import sys
 import numpy as np
 import h5py
 import tensorflow as tf
@@ -18,40 +19,35 @@ def run(L, datapath, logdir):
     config_ising["cg_method"] = "deci"
     print("Ising configuration:", config_ising)
     config_train = train.create_default_config_train()
+    config_train["verbosity"] = 1
+    config_train["patience"] = 50
+    if len(sys.argv) > 1:
+        config_train["batch_size"] = int(sys.argv[1])
     print("Train configuration:", config_train)
 
     # Make datasets
     datafile = os.path.join(
         datapath, "L{0:d}b{1:.4e}.h5".format(L, config_ising["beta"])
     )
-    cg_ref_file = os.path.join(
-        datapath,
-        "L{0:d}b{1:.4e}_cgdeci2.h5".format(
-            int(L / config_ising["cg_factor"]), config_ising["beta"]
-        ),
+    # data.create_cg_dataset(config_ising, datafile, 0, 2)
+    datasets, labels = data.load_datasets(
+        datafile, config_ising, config_train, shuffle=False
     )
-    data.create_cg_dataset(config_ising, datafile, 0, 2)
-    datasets, labels, exact_labels = data.load_datasets(
-        datafile, config_ising, config_train, cg_ref_file=cg_ref_file, shuffle=False
-    )
+    # print some information about the data
+    print("Number of training samples:", len(datasets[1]["train"][0]))
+    print("Number of validation samples:", len(datasets[1]["val"][0]))
+    print("Number of testing samples:", len(datasets[1]["test"][0]))
 
     # Train
     strategy = tf.distribute.MirroredStrategy()
+    print("Number of devices: {}".format(strategy.num_replicas_in_sync))
+    config_train["batch_size"] *= strategy.num_replicas_in_sync
     with strategy.scope():
         deep_model = models.ModelGroup(config_ising, config_train)
-        deep_logdir = os.path.join(logdir, "deep")
+        deep_model.ediff.compile(loss="mse", optimizer="Adam")
 
-        train.train_and_save(
-            deep_model,
-            datasets,
-            labels,
-            config_train,
-            deep_logdir,
-            exact_labels=exact_labels,
-        )
-
-        modelpath = os.path.join(logdir, "model")
-        tf.keras.experimental.export_saved_model(deep_model.energy, modelpath)
+    deep_logdir = os.path.join(logdir, "deep")
+    train.train_and_save(deep_model, datasets, labels, config_train, deep_logdir)
 
 
 # NEED TO UPDATE
@@ -123,7 +119,7 @@ def compare_observables(model_group, config, num_samples, num_chains, batch_size
 
 def main():
 
-    L = 4
+    L = 16
     today = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     logdir = os.path.join("logs", today)
     datapath = os.path.join(os.curdir, "data")

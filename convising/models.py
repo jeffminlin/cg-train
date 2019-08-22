@@ -6,7 +6,7 @@ import convising.layers as lys
 
 def log_cosh(x):
 
-    return tf.log((tf.exp(x) + tf.exp(-x)) / 2.0)
+    return tf.math.log((tf.math.exp(x) + tf.math.exp(-x)) / 2.0)
 
 
 def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activation):
@@ -50,7 +50,7 @@ def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activ
             dense_nodes[0], activation=dense_activation, use_bias=True, name="dense"
         )(M_conv)
     M_sum = tf.keras.layers.Lambda(
-        lambda x: tf.sum(x, axis=[1, 2]), name="sum_over_spins"
+        lambda x: tf.math.reduce_sum(x, axis=[1, 2]), name="sum_over_spins"
     )(M_fc)
     M_lincomb = tf.keras.layers.Dense(
         1, activation="linear", use_bias=False, name="combine_basis"
@@ -92,13 +92,16 @@ def model_e_diff(beta, model_energy):
 
 
 class ModelGroup:
-    def __init__(self, config_ising, config_train):
-        self.energy = deep_conv_e(
-            config_train["conv_activation"],
-            config_train["nfilters"],
-            config_train["kernel_size"],
-            config_train["dense_nodes"],
-            config_train["dense_activation"],
-        )
-        self.ediff = model_e_diff(config_ising["beta"], energy)
+    def __init__(self, config_ising, config_train, energy=None):
+        if not energy:
+            self.energy = deep_conv_e(
+                config_train["conv_activation"],
+                config_train["nfilters"],
+                config_train["kernel_size"],
+                config_train["dense_nodes"],
+                config_train["dense_activation"],
+            )
+        else:
+            self.energy = energy
+        self.ediff = model_e_diff(config_ising["beta"], self.energy)
 

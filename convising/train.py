@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 
+import convising.models as models
+
 
 def create_default_config_ising():
 
@@ -24,8 +26,9 @@ def create_default_config_train():
         "val_split": 1.0 / 9.0,
         "batch_size": 20000,
         "nepochs": 1000,
+        "patience": 100,
         "verbosity": 0,
-        "conv_activation": "log_cosh",
+        "conv_activation": models.log_cosh,
         "dense_activation": "elu",
         "kernel_size": 3,
         "nfilters": 4,
@@ -37,6 +40,7 @@ def create_default_config_train():
 
 def train(model_group, datasets, labels, config_train, cg_level, logdir, freeze=False):
 
+    os.makedirs(logdir, exist_ok=True)
     weightfile = os.path.join(logdir, "weights.h5")
     if freeze:
         weightfile = os.path.join(logdir, "weights_frozen.h5")
@@ -50,21 +54,21 @@ def train(model_group, datasets, labels, config_train, cg_level, logdir, freeze=
         weightfile, monitor="val_loss", save_best_only=True, save_weights_only=True
     )
     early_stop = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=100, restore_best_weights=True
+        monitor="val_loss", patience=config_train["patience"], restore_best_weights=True
     )
     callback_list = [best_weight, early_stop]
 
     # Train neural net
-    if datasets.get("val"):
-        val_data = (datasets["val"], labels["val"])
+    if datasets[cg_level].get("val"):
+        val_data = (datasets[cg_level]["val"], labels["val"])
     else:
         val_data = None
 
-    model_group.ediff.compile(loss="mean_squared_error", optimizer="Nadam")
     history = model_group.ediff.fit(
-        datasets[cg_level]["train"],
-        labels[cg_level]["train"],
+        x=datasets[cg_level]["train"],
+        y=labels["train"],
         verbose=config_train["verbosity"],
+        batch_size=config_train["batch_size"],
         validation_data=val_data,
         epochs=config_train["nepochs"],
         callbacks=callback_list,
@@ -85,13 +89,22 @@ def train_and_save(
     exact_labels=None,
 ):
 
+    print("Training")
     history = train(
         model_group, datasets, labels, config_train, cg_level_start, logdir, freeze
     )
+    print("Saving training history")
     save_loss(history, logdir)
-    compute_rg_metrics(model_group, datasets, labels, cg_level_start, cg_level_end)
+    print("Saving metrics")
+    compute_rg_metrics(
+        model_group, datasets, labels, cg_level_start, cg_level_end, logdir
+    )
     if exact_labels:
+        print("Saving exact metrics")
         compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir)
+
+    modelpath = os.path.join(logdir, "model")
+    model_group.energy.save(modelpath)
 
 
 def compute_stat_avg(first_samples, second_samples):
@@ -108,12 +121,13 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
 
     metrics = {}
 
-    metrics["keras"] = {}
-    metrics["keras"]["evaluate_names"] = models.ediff.metrics_names
-    for key in datasets:
-        metrics["keras"]["ediff_loss_" + key] = models.ediff.evaluate(
-            datasets[key][1], labels[key][1], verbose=0
-        )
+    if datasets.get(1):
+        metrics["keras"] = {}
+        metrics["keras"]["evaluate_names"] = models.ediff.metrics_names
+        for key in datasets[1]:
+            metrics["keras"]["ediff_loss_" + key] = models.ediff.evaluate(
+                datasets[1][key], labels[key], verbose=0
+            )
 
     metrics["rg"] = {}
     metrics["rg"]["cg_level_start"] = cg_level_start
@@ -127,8 +141,10 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
     nn["coarse"] = nn_basis.predict(datasets[cg_level_end]["test"])
 
     for key in nn:
-        metrics["rg"]["sing_values_" + key] = np.linalg.svd(nn[key], compute_uv=False)
-        metrics["rg"]["condition_num_" + key] = np.linalg.cond(nn[key])
+        metrics["rg"]["sing_values_" + key] = np.linalg.svd(
+            nn[key], compute_uv=False
+        ).tolist()
+        metrics["rg"]["condition_num_" + key] = np.linalg.cond(nn[key]).tolist()
 
     Mcc = compute_stat_avg(nn["coarse"], nn["coarse"])
     cc_cond = np.linalg.cond(Mcc)
@@ -137,13 +153,12 @@ def compute_rg_metrics(models, datasets, labels, cg_level_start, cg_level_end, l
     J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
     J_eigs, _ = np.linalg.eig(J)
     criticalexp = np.log(2) / np.log(np.max(np.real(J_eigs)))
-    metrics["condition_number_of_Mcc"] = cc_cond
-    metrics["jacobian"] = J
-    metrics["jacobian_eigs"] = J_eigs
-    metrics["critical_exp"] = criticalexp
+    metrics["condition_number_of_Mcc"] = float(cc_cond)
+    metrics["jacobian"] = J.tolist()
+    metrics["jacobian_eigs"] = J_eigs.tolist()
+    metrics["critical_exp"] = float(criticalexp)
 
-    metricfile = os.path.join(logdir, "metrics.json")
-    with open_or_create(metricfile, "w") as outfile:
+    with open_or_create(logdir, "metrics.json", "w") as outfile:
         json.dump(metrics, outfile)
 
 
@@ -159,13 +174,12 @@ def compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir
 
     for key in datasets:
         predict[key] = model_group.ediff.predict(datasets[key][1])
-        metrics[key]["loss"] = compute_mse(predict[key], exact_labels[key])
+        metrics[key]["loss"] = float(compute_mse(predict[key], exact_labels[key]))
 
-        noise_train = labels[key][1] - exact_labels[key]
-        metrics[key]["noise_var"] = np.var(noise_train)
+        noise = labels[key] - exact_labels[key]
+        metrics[key]["noise_var"] = float(np.var(noise))
 
-    metricfile = os.path.join(logdir, "metrics_exact.json")
-    with open_or_create(metricfile, "w") as outfile:
+    with open_or_create(logdir, "metrics_exact.json", "w") as outfile:
         json.dump(metrics, outfile)
 
 
@@ -173,24 +187,26 @@ def save_loss(history, logdir):
 
     min_loss = np.min(history.history["loss"])
     min_val_loss = np.min(history.history["val_loss"])
-    shifted_loss = history.history["loss"]
-    shifted_val_loss = history.history["val_loss"]
+    shifted_loss = history.history["loss"] - min_loss
+    shifted_val_loss = history.history["val_loss"] - min_val_loss
 
     plt.figure(1)
     plt.xlabel("epoch")
     plt.ylabel("loss, shifted")
     plt.yscale("log")
-    plt.plot(shifted_loss, ".-", label="loss, min = {.5f}".format(min_loss))
-    plt.plot(shifted_val_loss, ".-", label="val_loss, min = {.5f}".format(min_val_loss))
+    plt.plot(shifted_loss, ".-", label="loss, min = {:.5f}".format(min_loss))
+    plt.plot(
+        shifted_val_loss, ".-", label="val_loss, min = {:.5f}".format(min_val_loss)
+    )
     plt.legend()
     plt.savefig(os.path.join(logdir, "loss.png"), bbox_inches="tight")
 
-    lossfile = os.path.join(logdir, "loss.json")
-    with open_or_create(lossfile, "w") as outfile:
+    with open_or_create(logdir, "loss.json", "w") as outfile:
         json.dump(history.history, outfile)
 
 
-def open_or_create(path, option):
+def open_or_create(path, filename, option):
 
     os.makedirs(path, exist_ok=True)
-    return open(path, option)
+    filepath = os.path.join(path, filename)
+    return open(filepath, option)

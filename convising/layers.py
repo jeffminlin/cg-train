@@ -13,10 +13,10 @@ class PeriodicPad2D(tf.keras.layers.Layer):
         leftpad = int(self.pad_size / 2)
         rightpad = self.pad_size - leftpad
         x = inputs
-        x_1 = tf.concatenate([x[:, :, -leftpad:], x, x[:, :, :rightpad]], axis=2)
-        y = tf.concatenate([x_1[:, -leftpad:, :], x_1, x_1[:, :rightpad, :]], axis=1)
+        x_1 = tf.concat([x[:, :, -leftpad:], x, x[:, :, :rightpad]], axis=2)
+        y = tf.concat([x_1[:, -leftpad:, :], x_1, x_1[:, :rightpad, :]], axis=1)
 
-        return tf.expand_dims(y)
+        return tf.expand_dims(y, axis=-1)
 
     def compute_output_shape(self, input_shapes):
         return (input_shapes[0], None, None, 1)
