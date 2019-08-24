@@ -15,7 +15,7 @@ import convising.models as models
 
 def create_default_config_ising():
 
-    return {"L": 8, "beta": 0.4406868, "cg_method": "maj", "cg_factor": 2}
+    return {"L": 8, "beta": 0.4406868, "cg_method": "deci", "cg_factor": 2}
 
 
 def create_default_config_train():
@@ -91,13 +91,14 @@ def train_and_save(
 ):
 
     print("Training")
-    history = train(
-        model_group, datasets, labels, config_train, 1, logdir, freeze
-    )
+    history = train(model_group, datasets, labels, config_train, 1, logdir, freeze)
+    print("Saving the model")
+    modelpath = os.path.join(logdir, model_group.energy.name + ".h5")
+    model_group.energy.save(modelpath)
     print("Saving training history")
     save_loss(history, logdir)
     print("Saving metrics")
-    compute_rg_metrics(
+    metrics = compute_rg_metrics(
         model_group,
         datasets,
         labels,
@@ -109,13 +110,15 @@ def train_and_save(
     )
     if exact_labels:
         print("Saving exact metrics")
-        compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir)
+        exact_metrics = compute_exact_cg_metrics(
+            model_group, datasets, labels, exact_labels, logdir, config_train
+        )
+        return history, metrics, exact_metrics
 
-    modelpath = os.path.join(logdir, model_group.energy.name + ".h5")
-    model_group.energy.save(modelpath)
+    return history, metrics
 
 
-def compute_stat_avg(first_samples, second_samples):
+def connected_two_pt_correlation(first_samples, second_samples):
 
     average_first = np.average(first_samples, axis=0).reshape(1, -1)
     average_second = np.average(second_samples, axis=0).reshape(1, -1)
@@ -179,42 +182,53 @@ def compute_rg_metrics(
         ).tolist()
         metrics["rg"]["condition_num_" + key] = np.linalg.cond(nn[key]).tolist()
 
-    Mcc = compute_stat_avg(nn["coarse"], nn["coarse"])
+    Mcc = -connected_two_pt_correlation(nn["coarse"], nn["coarse"])
+    metrics["d<S_(n+1)>/dK_(n+1)"] = Mcc.tolist()
     cc_cond = np.linalg.cond(Mcc)
-    Mcf = compute_stat_avg(nn["coarse"], nn["fine"])
+    Mcf = -connected_two_pt_correlation(nn["coarse"], nn["fine"])
+    metrics["d<S_(n+1)>/dK_n"] = Mcf.tolist()
 
-    J = np.linalg.lstsq(Mcc.transpose(), Mcf.transpose(), rcond=None)[0].transpose()
+    J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
     J_eigs, _ = np.linalg.eig(J)
     J_eigs.sort()
     criticalexp = np.log(config_ising["cg_factor"]) / np.log(np.real(J_eigs)[-1])
-    metrics["condition_number_of_Mcc"] = float(cc_cond)
-    metrics["jacobian"] = J.tolist()
+    metrics["condition_number_of_d<S_(n+1)>/dK_(n+1)"] = float(cc_cond)
+    metrics["jacobian, "] = J.tolist()
     metrics["jacobian_eigs"] = [str(i) for i in J_eigs.tolist()]
     metrics["critical_exp"] = float(criticalexp)
 
     with open_or_create(logdir, "metrics.json", "w") as outfile:
         json.dump(metrics, outfile, indent=4)
 
-
-def compute_mse(predictions, exact_labels):
-
-    return np.mean(np.square(predictions - exact_labels))
+    return metrics
 
 
-def compute_exact_cg_metrics(model_group, datasets, labels, exact_labels, logdir):
+def compute_exact_cg_metrics(
+    model_group, datasets, labels, exact_labels, logdir, config_train
+):
 
     metrics = {}
     predict = {}
 
-    for key in datasets:
-        predict[key] = model_group.ediff.predict(datasets[key][1])
-        metrics[key]["loss"] = float(compute_mse(predict[key], exact_labels[key]))
+    for key in datasets[1]:
+        metrics[key] = {}
+
+        metrics[key]["loss"] = float(
+            model_group.ediff.evaluate(
+                datasets[1][key],
+                exact_labels[key],
+                batch_size=config_train["batch_size"],
+                verbose=config_train["verbosity"],
+            )
+        )
 
         noise = labels[key] - exact_labels[key]
         metrics[key]["noise_var"] = float(np.var(noise))
 
     with open_or_create(logdir, "metrics_exact.json", "w") as outfile:
         json.dump(metrics, outfile, indent=4)
+
+    return metrics
 
 
 def save_loss(history, logdir):
@@ -224,7 +238,7 @@ def save_loss(history, logdir):
     shifted_loss = history.history["loss"] - min_loss
     shifted_val_loss = history.history["val_loss"] - min_val_loss
 
-    plt.figure(1)
+    plt.figure()
     plt.xlabel("epoch")
     plt.ylabel("loss, shifted")
     plt.yscale("log")
@@ -234,6 +248,7 @@ def save_loss(history, logdir):
     )
     plt.legend()
     plt.savefig(os.path.join(logdir, "loss.png"), bbox_inches="tight")
+    plt.close()
 
     with open_or_create(logdir, "loss.json", "w") as outfile:
         json.dump(history.history, outfile, indent=4)

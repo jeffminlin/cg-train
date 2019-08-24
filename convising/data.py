@@ -1,4 +1,5 @@
 import os
+import time
 
 import h5py
 import numpy as np
@@ -11,7 +12,7 @@ def load_datasets(
     cg_level_start=1,
     cg_level_end=2,
     shuffle=True,
-    cg_ref_file=None,
+    exact=False,
 ):
 
     cg_method = config_ising["cg_method"]
@@ -48,10 +49,10 @@ def load_datasets(
             if cg_level == 1:
                 exp_ediffs = dset[group]["exp_ediffs"][:]
                 labels = split_train_val_test(exp_ediffs, config_train, idx)
-                if cg_ref_file:
-                    cg_exp_ediffs = compute_exact_cg(config_ising, dset, cg_ref_file)
+                if exact:
+                    exp_cg_ediffs = dset[group]["exp_cg_ediffs"][:]
                     exact_labels = split_train_val_test(
-                        cg_exp_ediffs, config_train, idx
+                        exp_cg_ediffs, config_train, idx
                     )
 
         for key in imagedata:  # Concatentate data
@@ -60,7 +61,7 @@ def load_datasets(
                 imagedata_flipped[key].astype(np.float64),
             ]
 
-    if cg_ref_file:
+    if exact:
         return outdata, labels, exact_labels
 
     return outdata, labels
@@ -89,7 +90,14 @@ def split_train_val_test(h5data, config_train, idx):
     return datasets
 
 
-def create_cg_dataset(config_ising, datafile, cg_level_start, cg_level_end):
+def create_cg_dataset(
+    config_ising,
+    datafile,
+    cg_level_start,
+    cg_level_end,
+    overwrite=False,
+    cg_ref_file=None,
+):
 
     L = config_ising["L"]
     beta = config_ising["beta"]
@@ -100,34 +108,61 @@ def create_cg_dataset(config_ising, datafile, cg_level_start, cg_level_end):
         if cg_level_start == 0:
             imagearray = dset["images"][:, :]
         else:
-            cgpath = str(cg_level_start) + "/" + cg_method + "/" + str(cg_factor) + "/"
-            imagearray = dset[cgpath + "images"][:, :]
+            cgpath = "/".join([str(cg_level_start), cg_method, str(cg_factor)])
+            imagearray = dset[cgpath]["images"][:, :]
 
         for flipidx in range(cg_level_end - cg_level_start):
+            curlevel = cg_level_start + flipidx + 1
             cgL = int(L / ((cg_factor) ** (cg_level_start + flipidx)))
             print("Coarse graining from", cgL, "to", int(cgL / cg_factor))
-            cg_images, exp_ediff = coarse_grain(
-                cgL, beta, cg_method, cg_factor, imagearray
-            )
-            h5py_create_data_catch(
-                dset,
-                [str(cg_level_start + flipidx + 1), cg_method, str(cg_factor)],
-                "images",
-                data=cg_images[0],
-                dtype="i1",
-            )
-            h5py_create_data_catch(
-                dset,
-                [str(cg_level_start + flipidx + 1), cg_method, str(cg_factor)],
-                "images_flipped",
-                data=cg_images[1],
-                dtype="i1",
-            )
-            if cg_level_start == 0 and flipidx == 0:
-                h5py_create_data_catch(
-                    dset, ["1", cg_method, str(cg_factor)], "exp_ediffs", data=exp_ediff
+
+            grouplist = [str(curlevel), cg_method, str(cg_factor)]
+            exists_check = check_group_datasets(dset, grouplist, curlevel, cg_ref_file)
+            no_overwrite = exists_check and not overwrite
+
+            if no_overwrite:
+                print("Dataset exists, images")
+                cgpath = "/".join([str(curlevel), cg_method, str(cg_factor)])
+                imagearray = dset[cgpath]["images"][:, :, :]
+            else:
+                cg_images, exp_ediffs = coarse_grain(
+                    cgL, beta, cg_method, cg_factor, imagearray
                 )
-            imagearray = cg_images[0]
+                h5py_create_catch(
+                    dset, grouplist, "images", data=cg_images[0], dtype="i1"
+                )
+                h5py_create_catch(
+                    dset, grouplist, "images_flipped", data=cg_images[1], dtype="i1"
+                )
+                if curlevel == 1:
+                    h5py_create_catch(
+                        dset, grouplist, "exp_ediffs", data=exp_ediffs
+                    )
+                    if cg_ref_file:
+                        exp_cg_ediffs = compute_exact_cg(
+                            config_ising, dset, cg_ref_file
+                        )
+                        h5py_create_catch(
+                            dset, grouplist, "exp_cg_ediffs", data=exp_cg_ediffs
+                        )
+
+                imagearray = cg_images[0]
+
+
+def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None):
+
+    exists_check = True
+    images_exists = h5py_exists(dset, grouplist, "images")
+    images_flipped_exists = h5py_exists(dset, grouplist, "images_flipped")
+    exists_check = exists_check and images_exists and images_flipped_exists
+    if curlevel == 1:
+        exp_ediffs_exists = h5py_exists(dset, grouplist, "exp_ediffs")
+        exists_check = exists_check and exp_ediffs_exists
+        if cg_ref_file:
+            exp_cg_ediffs_exists = h5py_exists(dset, grouplist, "exp_cg_ediffs")
+            exists_check = exists_check and exp_cg_ediffs_exists
+
+    return exists_check
 
 
 def compute_exact_cg(config_ising, dset, cg_ref_file):
@@ -138,8 +173,8 @@ def compute_exact_cg(config_ising, dset, cg_ref_file):
     cg_factor = config_ising["cg_factor"]
 
     cg_path = "1/" + cg_method + "/" + str(cg_factor) + "/"
-    cgimage = dset[cg_path + "images"]
-    cgimageflip = dset[cg_path + "images_flipped"]
+    cgimage = dset[cg_path + "images"][:, :, :]
+    cgimageflip = dset[cg_path + "images_flipped"][:, :, :]
 
     with h5py.File(cg_ref_file, "r") as cgref_dset:
         cgref_ss = cgref_dset["images"][:, :]
@@ -147,9 +182,9 @@ def compute_exact_cg(config_ising, dset, cg_ref_file):
 
     cg_e = lookup_cg_e(L, beta, cg_factor, cgimage, cgref_ss, cgref_e)
     cg_e_flip = lookup_cg_e(L, beta, cg_factor, cgimageflip, cgref_ss, cgref_e)
-    cg_exp_ediff = np.exp(-beta * (cg_e_flip - cg_e))
+    exp_cg_ediff = np.exp(-beta * (cg_e_flip - cg_e))
 
-    return cg_exp_ediff
+    return exp_cg_ediff
 
 
 def coarse_grain(L, beta, cg_method, cgf, image):
@@ -232,16 +267,21 @@ def cg_imageflip(L, cg_method, cgf, image, cgflipidx):
 
 def lookup_cg_e(L, beta, cgf, cgimage, cgref_ss, cgref_e):
 
-    im_equal = [
-        np.argwhere(np.sum(np.square(cgref_ss - image.ravel()), axis=1) == 0)
-        for image in cgimage
-    ]
-    cg_e = np.array([cgref_e[idx] for idx in im_equal]).ravel()
+    cgref_dict = {}
+    for idx, ss in enumerate(cgref_ss):
+        cgref_dict[tuple(ss.ravel().tolist())] = cgref_e[idx]
+    lookup_func = lambda image: cgref_dict[tuple(image.ravel().tolist())]
+    cg_e = np.array([lookup_func(image) for image in cgimage]).ravel()
 
     return cg_e
 
 
-def h5py_create_data_catch(dset, grouplist, name, data, dtype=None):
+def h5py_exists(dset, grouplist, name):
+
+    return name in dset["/".join(grouplist)]
+
+
+def h5py_create_catch(dset, grouplist, name, data, dtype=None, overwrite=True):
 
     if dtype is None:
         dtype = data.dtype
@@ -250,13 +290,14 @@ def h5py_create_data_catch(dset, grouplist, name, data, dtype=None):
         group = dset.create_group("/".join(grouplist))
         print("Group", "/".join(grouplist), "created")
     except ValueError as error:
-        print("Group", "/".join(grouplist), "already exists")
         group = dset["/".join(grouplist)]
 
     try:
         group.create_dataset(name, data=data, dtype=dtype)
-        print("Coarse-grained data created,", name)
+        print("Dataset created,", name)
     except RuntimeError as error:
-        print("Coarse-grained data likely already created,", name + ",", "overwriting")
-        del group[name]
-        group.create_dataset(name, data=data, dtype=dtype)
+        print("A dataset is here,", name)
+        if overwrite:
+            print("Overwriting")
+            del group[name]
+            group.create_dataset(name, data=data, dtype=dtype)
