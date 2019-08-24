@@ -139,31 +139,31 @@ class Observables:
             int(self.num_samples * self.skip / self.num_chains) + self.num_burn
         )
 
-        self.avgs, self.vars = self.compute_observables(
+        self.avgs, self.variances = self.compute_observables(
             np.zeros((1, self.numspins)), batch_size
         )
         self.num_recorded = 0
 
     def compute_observables(self, images, batch_size):
         avgs = np.zeros(4)
-        vars = np.zeros(4)
+        variances = np.zeros(4)
         avgs_new = np.zeros(4)
-        vars_new = np.zeros(4)
+        variances_new = np.zeros(4)
         num_computed = 0
 
         num_batches = int(np.floor(images.shape[0] / float(batch_size)))
 
         for batchidx in range(num_batches):
-            image = images[
+            image_batch = images[
                 batchidx * batch_size : (batchidx + 1) * batch_size, :
             ].reshape((-1, self.L, self.L))
             first_nearest = np.sum(
                 0.5
                 * (
-                    image * np.roll(image, 1, axis=1)
-                    + image * np.roll(image, -1, axis=1)
-                    + image * np.roll(image, 1, axis=2)
-                    + image * np.roll(image, -1, axis=2)
+                    image_batch * np.roll(image_batch, 1, axis=1)
+                    + image_batch * np.roll(image_batch, -1, axis=1)
+                    + image_batch * np.roll(image_batch, 1, axis=2)
+                    + image_batch * np.roll(image_batch, -1, axis=2)
                 ),
                 axis=(1, 2),
             )
@@ -171,29 +171,34 @@ class Observables:
             second_nearest = np.sum(
                 0.5
                 * (
-                    image * np.roll(image, (1, 1), axis=(1, 2))
-                    + image * np.roll(image, (1, -1), axis=(1, 2))
-                    + image * np.roll(image, (-1, 1), axis=(1, 2))
-                    + image * np.roll(image, (-1, -1), axis=(1, 2))
+                    image_batch * np.roll(image_batch, (1, 1), axis=(1, 2))
+                    + image_batch * np.roll(image_batch, (1, -1), axis=(1, 2))
+                    + image_batch * np.roll(image_batch, (-1, 1), axis=(1, 2))
+                    + image_batch * np.roll(image_batch, (-1, -1), axis=(1, 2))
                 ),
                 axis=(1, 2),
             )
             avgs_new[1] = second_nearest / self.numspins
             four_spins = np.sum(
-                image
-                * np.roll(image, 1, axis=1)
-                * np.roll(image, 1, axis=2)
-                * np.roll(image, (1, 1), axis=(1, 2)),
+                image_batch
+                * np.roll(image_batch, 1, axis=1)
+                * np.roll(image_batch, 1, axis=2)
+                * np.roll(image_batch, (1, 1), axis=(1, 2)),
                 axis=(1, 2),
             )
             avgs_new[2] = four_spins / self.numspins
-            mag = np.sum(image, axis=(1, 2))
+            mag = np.sum(image_batch, axis=(1, 2))
             avgs_new[3] = mag / self.numspins
-            avgs, vars, num_computed = self.update_observables(
-                avgs, vars, num_computed, avgs_new, vars_new, image.shape[0]
+            avgs, variances, num_computed = self.update_observables(
+                avgs,
+                variances,
+                num_computed,
+                avgs_new,
+                variances_new,
+                image_batch.shape[0],
             )
 
-        return avgs, vars
+        return avgs, variances
 
     def metrop_par(self, batch_size):
         accept_count = 0
@@ -220,56 +225,66 @@ class Observables:
 
             if (tstep % self.skip == 0) and (tstep > self.num_burn):
                 # Compute observables
-                avgs, vars = self.compute_observables(ss, batch_size)
-                self.avgs, self.vars, self.num_recorded = self.update_observables(
-                    self.avgs, self.vars, self.num_recorded, avgs, vars, self.num_chains
+                avgs, variances = self.compute_observables(ss, batch_size)
+                self.avgs, self.variances, self.num_recorded = self.update_observables(
+                    self.avgs,
+                    self.variances,
+                    self.num_recorded,
+                    avgs,
+                    variances,
+                    self.num_chains,
                 )
 
         return accept_count / (self.num_sweeps * self.num_chains)
 
     def update_observables(
-        self, avgs_old, vars_old, num_old, avgs_new, vars_new, num_new
+        self, avgs_old, variances_old, num_old, avgs_new, variances_new, num_new
     ):
         # Parallel updates
         num_tot = num_old + num_new
         avgs = (avgs_old * num_old + avgs_new * num_new) / num_tot
 
         delta = avgs_new - avgs_old
-        M2_old = vars_old * (num_old - 1.0)
-        M2_new = vars_new * (num_new - 1.0)
+        M2_old = variances_old * (num_old - 1.0)
+        M2_new = variances_new * (num_new - 1.0)
         M2 = M2_old + M2_new + np.square(delta) * num_old * num_new / num_tot
         if num_tot > 1:
-            vars = M2 / (num_tot - 1.0)
+            variances = M2 / (num_tot - 1.0)
         else:
-            vars = M2
+            variances = M2
 
-        return avgs, vars, num_tot
+        return avgs, variances, num_tot
 
     def print_observables(self):
         print()
         print("Number of samples:", self.num_recorded)
         print()
         print("Nearest neighbor interaction (per spin):", self.avgs[0])
-        print("Variance of nn interaction (per spin):", self.vars[0])
-        print("Standard error (biased), nn:", np.sqrt(self.vars[0] / self.num_recorded))
+        print("Variance of nn interaction (per spin):", self.variances[0])
+        print(
+            "Standard error (biased), nn:",
+            np.sqrt(self.variances[0] / self.num_recorded),
+        )
         print()
         print("Second nn interaction (per spin):", self.avgs[1])
-        print("Variance of second nn interaction (per spin):", self.vars[1])
+        print("Variance of second nn interaction (per spin):", self.variances[1])
         print(
             "Standard error (biased), second nn:",
-            np.sqrt(self.vars[1] / self.num_recorded),
+            np.sqrt(self.variances[1] / self.num_recorded),
         )
         print()
         print("Four spin interaction (per spin):", self.avgs[2])
-        print("Variance of four spin interaction (per spin):", self.vars[2])
+        print("Variance of four spin interaction (per spin):", self.variances[2])
         print(
             "Standard error (biased), four spin:",
-            np.sqrt(self.vars[2] / self.num_recorded),
+            np.sqrt(self.variances[2] / self.num_recorded),
         )
         print()
         print("Average magnetization (per spin):", self.avgs[3])
-        print("Variance of magnetization (per spin):", self.vars[3])
+        print("Variance of magnetization (per spin):", self.variances[3])
         print(
-            "Standard error (biased), mag:", np.sqrt(self.vars[3] / self.num_recorded)
+            "Standard error (biased), mag:",
+            np.sqrt(self.variances[3] / self.num_recorded),
         )
         print()
+

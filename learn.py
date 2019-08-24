@@ -133,71 +133,60 @@ def cg_loss_vs_nsamples(config_ising, config_train, keep_list, datafile, logdir)
     plt.close()
 
 
-# NEED TO UPDATE
-def compute_iac(model_group, config):
+def compute_iac(model_group, config_ising, plotpath):
+
+    cgL = int(config_ising["L"] / config_ising["cg_factor"])
 
     ss_traj = mcmc.gen_samples(
         model_group.ediff.predict,
         int(1e4),
         1,
-        np.random.choice([-1, 1], size=(100, config.cgL * config.cgL)),
+        np.random.choice([-1, 1], size=(100, cgL * cgL)),
         5000,
     )
-    e_traj = model_group.energy.predict(
-        ss_traj.reshape([-1, config.cgL, config.cgL])
-    ).ravel()
+    e_traj = model_group.energy.predict(ss_traj.reshape([-1, cgL, cgL])).ravel()
 
     kappa = 250
-    plotname = "".join(["./figs/autocorr", config.filepath, ".png"])
     IAC, _ = mcmc.plot_iac(
         [e_traj],
         ["Standard M-H"],
-        "".join(
-            ["Metropolis-Hastings, L = ", str(config.L), ", CG L = ", str(config.cgL)]
-        ),
+        "Metropolis-Hastings, L = " + str(config_ising["L"]) + ", CG L = " + str(cgL),
         kappa,
-        plotname,
+        plotpath,
     )
     print("Integrated autocorrelation, kappa =", kappa, ":", IAC)
 
 
-# # NEED TO UPDATE
-# def compare_observables(model_group, config, num_samples, num_chains, batch_size, skip):
+def compare_observables(
+    model_group, config_ising, datafile, num_samples, num_chains, batch_size, skip
+):
 
-#     obs_model = mcmc.Observables(
-#         model_group.ediff.predict,
-#         config.cgL,
-#         num_samples,
-#         num_chains,
-#         5000,
-#         batch_size,
-#         skip,
-#     )
-#     obs_model.metrop_par(batch_size)
-#     print()
-#     print("Samples generated using learned model")
-#     obs_model.print_observables()
-#     print()
+    cgL = int(config_ising["L"] / config_ising["cg_factor"])
 
-#     obs_samples = mcmc.Observables(
-#         model_group.ediff.predict,
-#         config.cgL,
-#         num_samples,
-#         num_chains,
-#         5000,
-#         batch_size,
-#         skip,
-#     )
-#     with h5py.File(config.datafile, "r") as dset:
-#         obs_samples.avgs, obs_samples.vars = obs_samples.compute_observables(
-#             dset["".join(["cgimage_", config.cg_method, str(config.cg_factor)])],
-#             batch_size,
-#         )
-#     obs_samples.num_recorded = 5e6
-#     print()
-#     print("Samples generated with Swendsen-Wang")
-#     obs_samples.print_observables()
-#     print()
+    obs_model = mcmc.Observables(
+        model_group.ediff.predict, cgL, num_samples, num_chains, 5000, batch_size, skip
+    )
+    obs_model.metrop_par(batch_size)
+    print()
+    print("Samples generated using learned model")
+    obs_model.print_observables()
+    print()
+
+    obs_samples = mcmc.Observables(
+        model_group.ediff.predict, cgL, num_samples, num_chains, 5000, batch_size, skip
+    )
+    with h5py.File(datafile, "r") as dset:
+        group = "/".join(
+            ["1", config_ising["cg_method"], str(config_ising["cg_factor"])]
+        )
+        obs_samples.avgs, obs_samples.variances = obs_samples.compute_observables(
+            dset[group]["images"], batch_size
+        )
+        obs_samples.num_recorded = len(dset[group]["images"])
+    print()
+    print("Samples generated with Swendsen-Wang")
+    obs_samples.print_observables()
+    print()
 
 
 def main():
@@ -210,7 +199,7 @@ def main():
         "batch_size": 2500,  # Should use one GPU's worth of memory efficiently
         "nepochs": 1000,
         "patience": 100,
-        "verbosity": 1,
+        "verbosity": 0,
         "conv_activation": "log_cosh",
         "dense_activation": "elu",
         "kernel_size": 3,
@@ -233,7 +222,7 @@ def main():
     )
     data.create_cg_dataset(config_ising, datafile, 0, 2, cg_ref_file=cg_ref_file)
 
-    keep_list = np.power(10.0, np.linspace(-2.0, 0.0, num=20))
+    keep_list = np.power(10.0, np.linspace(-3.0, 0.0, num=40))
     cg_loss_vs_nsamples(config_ising, config_train, keep_list, datafile, logdir)
 
 
