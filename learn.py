@@ -175,12 +175,12 @@ def compare_observables(
         50 * skip,
         batch_size,
         skip,
-        logdir,
     )
     obs_model.metrop_par(batch_size)
     print()
     print("Samples generated using learned model")
-    observed = obs_model.save_observables()
+    logfile = os.path.join(logdir, "deep_model_obs.json")
+    observed = obs_model.save_observables(logfile)
     print(observed)
 
     obs_samples = mcmc.Observables(
@@ -191,7 +191,6 @@ def compare_observables(
         50 * skip,
         batch_size,
         skip,
-        logdir,
     )
     with h5py.File(datafile, "r") as dset:
         group = "/".join(
@@ -203,7 +202,8 @@ def compare_observables(
         obs_samples.num_recorded = len(dset[group]["images"])
     print()
     print("Samples generated with Swendsen-Wang")
-    observed = obs_samples.save_observables()
+    logfile = os.path.join(logdir, "sw_obs.json")
+    observed = obs_samples.save_observables(logfile)
     print(observed)
 
 

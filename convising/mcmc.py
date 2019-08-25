@@ -129,7 +129,7 @@ def plot_iac(Ms, labels, title, kappa, plotname):
 
 class Observables:
     def __init__(
-        self, ediff_fun, L, num_samples, num_chains, num_burn, batch_size, skip, logdir
+        self, ediff_fun, L, num_samples, num_chains, num_burn, batch_size, skip
     ):
         self.ediff_fun = ediff_fun
         self.numspins = L * L
@@ -146,8 +146,6 @@ class Observables:
             np.zeros((1, self.numspins)), batch_size
         )
         self.num_recorded = 0
-
-        self.logdir = logdir
 
     def compute_observables(self, images, batch_size):
         avgs = np.zeros(4)
@@ -266,7 +264,7 @@ class Observables:
 
         return avgs, variances, num_tot
 
-    def save_observables(self):
+    def save_observables(self, logfile):
         observed = {}
 
         observed["nsamples"] = self.num_recorded
@@ -279,7 +277,7 @@ class Observables:
                 "std err (biased)": np.sqrt(self.variances[idx] / self.num_recorded),
             }
 
-        with open_or_create(self.logdir, "observables.json", "w") as outfile:
+        with open_or_create(logfile, "w") as outfile:
             json.dump(observed, outfile, indent=4)
 
         return observed
