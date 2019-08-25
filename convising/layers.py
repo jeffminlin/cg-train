@@ -18,6 +18,11 @@ class PeriodicPad2D(tf.keras.layers.Layer):
 
         return tf.expand_dims(y, axis=-1)
 
+    def get_config(self):
+        config = super(PeriodicPad2D, self).get_config()
+        config.update({"pad_size": self.pad_size})
+        return config
+
     def compute_output_shape(self, input_shapes):
         return (input_shapes[0], None, None, 1)
 

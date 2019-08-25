@@ -1,5 +1,5 @@
 import os
-import time
+import datetime
 
 import h5py
 import numpy as np
@@ -111,6 +111,7 @@ def create_cg_dataset(
             cgpath = "/".join([str(cg_level_start), cg_method, str(cg_factor)])
             imagearray = dset[cgpath]["images"][:, :]
 
+        no_overwrite_persist = True
         for flipidx in range(cg_level_end - cg_level_start):
             curlevel = cg_level_start + flipidx + 1
             cgL = int(L / ((cg_factor) ** (cg_level_start + flipidx)))
@@ -120,30 +121,50 @@ def create_cg_dataset(
             exists_check = check_group_datasets(dset, grouplist, curlevel, cg_ref_file)
             no_overwrite = exists_check and not overwrite
 
+            # If at any level you need to overwrite, then you must overwrite for all
+            # coarser-grained levels
+            no_overwrite = no_overwrite and no_overwrite_persist
+            overwrite_persist = no_overwrite
+
             if no_overwrite:
-                print("Dataset exists, images")
+                print("Datasets exist and times of creation match, not overwriting")
                 cgpath = "/".join([str(curlevel), cg_method, str(cg_factor)])
                 imagearray = dset[cgpath]["images"][:, :, :]
             else:
                 cg_images, exp_ediffs = coarse_grain(
                     cgL, beta, cg_method, cg_factor, imagearray
                 )
+                today_hash = hash(datetime.datetime.now())
                 h5py_create_catch(
-                    dset, grouplist, "images", data=cg_images[0], dtype="i1"
+                    dset,
+                    grouplist,
+                    "images",
+                    data=cg_images[0],
+                    id=today_hash,
+                    dtype="i1",
                 )
                 h5py_create_catch(
-                    dset, grouplist, "images_flipped", data=cg_images[1], dtype="i1"
+                    dset,
+                    grouplist,
+                    "images_flipped",
+                    data=cg_images[1],
+                    id=today_hash,
+                    dtype="i1",
                 )
                 if curlevel == 1:
                     h5py_create_catch(
-                        dset, grouplist, "exp_ediffs", data=exp_ediffs
+                        dset, grouplist, "exp_ediffs", data=exp_ediffs, id=today_hash
                     )
                     if cg_ref_file:
                         exp_cg_ediffs = compute_exact_cg(
                             config_ising, dset, cg_ref_file
                         )
                         h5py_create_catch(
-                            dset, grouplist, "exp_cg_ediffs", data=exp_cg_ediffs
+                            dset,
+                            grouplist,
+                            "exp_cg_ediffs",
+                            data=exp_cg_ediffs,
+                            id=today_hash,
                         )
 
                 imagearray = cg_images[0]
@@ -151,16 +172,32 @@ def create_cg_dataset(
 
 def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None):
 
+    if "/".join(grouplist) not in dset:
+        return False
+        
     exists_check = True
+    ids = []
     images_exists = h5py_exists(dset, grouplist, "images")
+    if images_exists:
+        ids.append(dset["/".join(grouplist)]["images_date"][()])
     images_flipped_exists = h5py_exists(dset, grouplist, "images_flipped")
+    if images_flipped_exists:
+        ids.append(dset["/".join(grouplist)]["images_flipped_date"][()])
     exists_check = exists_check and images_exists and images_flipped_exists
     if curlevel == 1:
         exp_ediffs_exists = h5py_exists(dset, grouplist, "exp_ediffs")
+        if exp_ediffs_exists:
+            ids.append(dset["/".join(grouplist)]["exp_ediffs_date"][()])
         exists_check = exists_check and exp_ediffs_exists
         if cg_ref_file:
             exp_cg_ediffs_exists = h5py_exists(dset, grouplist, "exp_cg_ediffs")
+            if images_flipped_exists:
+                ids.append(dset["/".join(grouplist)]["images_flipped_date"][()])
             exists_check = exists_check and exp_cg_ediffs_exists
+
+    if exists_check:
+        id_check = len(set(ids)) == 1
+        exists_check = exists_check and id_check
 
     return exists_check
 
@@ -278,10 +315,13 @@ def lookup_cg_e(L, beta, cgf, cgimage, cgref_ss, cgref_e):
 
 def h5py_exists(dset, grouplist, name):
 
-    return name in dset["/".join(grouplist)]
+    check_dset = name in dset["/".join(grouplist)]
+    check_id = name + "_date" in dset["/".join(grouplist)]
+
+    return check_dset and check_id
 
 
-def h5py_create_catch(dset, grouplist, name, data, dtype=None, overwrite=True):
+def h5py_create_catch(dset, grouplist, name, data, id, dtype=None, overwrite=True):
 
     if dtype is None:
         dtype = data.dtype
@@ -294,10 +334,16 @@ def h5py_create_catch(dset, grouplist, name, data, dtype=None, overwrite=True):
 
     try:
         group.create_dataset(name, data=data, dtype=dtype)
+        group.create_dataset(name + "_date", data=id)
         print("Dataset created,", name)
     except RuntimeError as error:
         print("A dataset is here,", name)
         if overwrite:
             print("Overwriting")
             del group[name]
+            try:
+                del group[name + "_date"]
+            except KeyError:
+                pass
             group.create_dataset(name, data=data, dtype=dtype)
+            group.create_dataset(name + "_date", data=id)

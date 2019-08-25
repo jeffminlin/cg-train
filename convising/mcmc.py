@@ -1,3 +1,5 @@
+import os
+import json
 import matplotlib
 
 matplotlib.use("Agg")
@@ -83,7 +85,8 @@ def gen_samples(ediff_fun, tn, nsample, ss0, nburn):
 
 def auto_corr_fast(M, kappa):
 
-    # The autocorrelation has to be truncated at some point so there are enough data points constructing each lag. Let kappa be the cutoff
+    # The autocorrelation has to be truncated at some point so there are enough data
+    # points constructing each lag. Let kappa be the cutoff
     M = M - np.mean(M)
     N = len(M)
     fvi = np.fft.fft(M, n=2 * N)
@@ -126,7 +129,7 @@ def plot_iac(Ms, labels, title, kappa, plotname):
 
 class Observables:
     def __init__(
-        self, ediff_fun, L, num_samples, num_chains, num_burn, batch_size, skip
+        self, ediff_fun, L, num_samples, num_chains, num_burn, batch_size, skip, logdir
     ):
         self.ediff_fun = ediff_fun
         self.numspins = L * L
@@ -143,6 +146,8 @@ class Observables:
             np.zeros((1, self.numspins)), batch_size
         )
         self.num_recorded = 0
+
+        self.logdir = logdir
 
     def compute_observables(self, images, batch_size):
         avgs = np.zeros(4)
@@ -167,7 +172,8 @@ class Observables:
                 ),
                 axis=(1, 2),
             )
-            avgs_new[0] = first_nearest / self.numspins
+            avgs_new[0] = np.average(first_nearest) / self.numspins
+            variances_new[0] = np.var(first_nearest / self.numspins)
             second_nearest = np.sum(
                 0.5
                 * (
@@ -178,7 +184,8 @@ class Observables:
                 ),
                 axis=(1, 2),
             )
-            avgs_new[1] = second_nearest / self.numspins
+            avgs_new[1] = np.average(second_nearest) / self.numspins
+            variances_new[1] = np.var(second_nearest / self.numspins)
             four_spins = np.sum(
                 image_batch
                 * np.roll(image_batch, 1, axis=1)
@@ -186,9 +193,11 @@ class Observables:
                 * np.roll(image_batch, (1, 1), axis=(1, 2)),
                 axis=(1, 2),
             )
-            avgs_new[2] = four_spins / self.numspins
+            avgs_new[2] = np.average(four_spins) / self.numspins
+            variances_new[2] = np.var(four_spins / self.numspins)
             mag = np.sum(image_batch, axis=(1, 2))
-            avgs_new[3] = mag / self.numspins
+            avgs_new[3] = np.average(mag) / self.numspins
+            variances_new[3] = np.var(mag / self.numspins)
             avgs, variances, num_computed = self.update_observables(
                 avgs,
                 variances,
@@ -202,28 +211,30 @@ class Observables:
 
     def metrop_par(self, batch_size):
         accept_count = 0
-        ss = np.random.choice([-1, 1], size=(self.num_chains, self.numspins))
+        ss = np.random.choice([-1.0, 1.0], size=(self.num_chains, self.numspins))
+        ss_concat = [ss, np.copy(ss)]
 
         random_spin_flip = np.random.randint(
             self.numspins, size=(self.num_sweeps, self.num_chains)
         )
 
         for tstep, ssidx in enumerate(random_spin_flip):
-            prop_ss = np.copy(ss)
-            prop_ss[range(self.num_chains), ssidx] *= -1
+            ss_concat[1][range(self.num_chains), ssidx] *= -1
 
-            energy_diff = self.ediff_fun(
+            exp_ediff = self.ediff_fun(
                 [
-                    ss.reshape((-1, self.L, self.L)),
-                    prop_ss.reshape((-1, self.L, self.L)),
+                    ss_concat[0].reshape((-1, self.L, self.L)),
+                    ss_concat[1].reshape((-1, self.L, self.L)),
                 ]
-            ).reshape((self.num_chains))
-            flipidx = np.random.random(self.num_chains) < energy_diff
+            ).reshape((self.num_chains,))
+            flipidx = np.random.random(self.num_chains) < exp_ediff
 
-            accept_count += np.count_nonzero(flipidx)
+            if tstep >= self.num_burn:
+                accept_count += np.count_nonzero(flipidx)
             ss[np.arange(self.num_chains)[flipidx], ssidx[flipidx]] *= -1
+            ss_concat[1] = np.copy(ss)
 
-            if (tstep % self.skip == 0) and (tstep > self.num_burn):
+            if ((tstep + 1) % self.skip == 0) and (tstep >= self.num_burn):
                 # Compute observables
                 avgs, variances = self.compute_observables(ss, batch_size)
                 self.avgs, self.variances, self.num_recorded = self.update_observables(
@@ -235,7 +246,7 @@ class Observables:
                     self.num_chains,
                 )
 
-        return accept_count / (self.num_sweeps * self.num_chains)
+        return accept_count / ((self.num_sweeps - self.num_burn) * self.num_chains)
 
     def update_observables(
         self, avgs_old, variances_old, num_old, avgs_new, variances_new, num_new
@@ -255,36 +266,27 @@ class Observables:
 
         return avgs, variances, num_tot
 
-    def print_observables(self):
-        print()
-        print("Number of samples:", self.num_recorded)
-        print()
-        print("Nearest neighbor interaction (per spin):", self.avgs[0])
-        print("Variance of nn interaction (per spin):", self.variances[0])
-        print(
-            "Standard error (biased), nn:",
-            np.sqrt(self.variances[0] / self.num_recorded),
-        )
-        print()
-        print("Second nn interaction (per spin):", self.avgs[1])
-        print("Variance of second nn interaction (per spin):", self.variances[1])
-        print(
-            "Standard error (biased), second nn:",
-            np.sqrt(self.variances[1] / self.num_recorded),
-        )
-        print()
-        print("Four spin interaction (per spin):", self.avgs[2])
-        print("Variance of four spin interaction (per spin):", self.variances[2])
-        print(
-            "Standard error (biased), four spin:",
-            np.sqrt(self.variances[2] / self.num_recorded),
-        )
-        print()
-        print("Average magnetization (per spin):", self.avgs[3])
-        print("Variance of magnetization (per spin):", self.variances[3])
-        print(
-            "Standard error (biased), mag:",
-            np.sqrt(self.variances[3] / self.num_recorded),
-        )
-        print()
+    def save_observables(self):
+        observed = {}
 
+        observed["nsamples"] = self.num_recorded
+        recorded = ["nearest neighbor", "second nn", "four spins", "avg magnetization"]
+
+        for idx, interaction in enumerate(recorded):
+            observed[interaction] = {
+                "average": self.avgs[idx],
+                "variance": self.variances[idx],
+                "std err (biased)": np.sqrt(self.variances[idx] / self.num_recorded),
+            }
+
+        with open_or_create(self.logdir, "observables.json", "w") as outfile:
+            json.dump(observed, outfile, indent=4)
+
+        return observed
+
+
+def open_or_create(path, filename, option):
+
+    os.makedirs(path, exist_ok=True)
+    filepath = os.path.join(path, filename)
+    return open(filepath, option)

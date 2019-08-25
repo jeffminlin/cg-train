@@ -1,28 +1,28 @@
-import os
 import datetime
-import numpy as np
+import os
+import time
+
 import h5py
 import matplotlib
 
 matplotlib.use("Agg")  # matplotlib backend for HPC
 import matplotlib.pyplot as plt
+import numpy as np
 import tensorflow as tf
 
 import convising.data as data
-import convising.train as train
-import convising.models as models
+import convising.layers as isinglayers
 import convising.mcmc as mcmc
+import convising.models as models
+import convising.train as train
 
 
-def run(config_ising, config_train, datapath, logdir):
+def run(config_ising, config_train, datafile, logdir):
 
     print("Ising configuration:", config_ising)
     print("Train configuration:", config_train)
 
     # Make datasets
-    datafile = os.path.join(
-        datapath, "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"])
-    )
     data.create_cg_dataset(config_ising, datafile, 0, 3)
     datasets, labels = data.load_datasets(
         datafile,
@@ -37,7 +37,9 @@ def run(config_ising, config_train, datapath, logdir):
     print("Number of validation samples:", len(datasets[1]["val"][0]))
     print("Number of testing samples:", len(datasets[1]["test"][0]))
 
-    training_loop(config_ising, config_train, datasets, labels, logdir)
+    loop_out = training_loop(config_ising, config_train, datasets, labels, logdir)
+
+    return loop_out
 
 
 def training_loop(
@@ -54,7 +56,6 @@ def training_loop(
         deep_model.ediff.compile(loss="mse", optimizer=optimizer_adam)
 
     adam_logdir = os.path.join(logdir, "adam")
-    config_train["patience"] = 20
     train.train_and_save(
         deep_model,
         datasets,
@@ -73,8 +74,7 @@ def training_loop(
 
     deep_model.ediff.load_weights(os.path.join(adam_logdir, "weights.h5"))
     sgd_logdir = os.path.join(logdir, "sgd")
-    config_train["patience"] = 20
-    history, metrics, exact_metrics = train.train_and_save(
+    train_out = train.train_and_save(
         deep_model,
         datasets,
         labels,
@@ -86,10 +86,7 @@ def training_loop(
         exact_labels=exact_labels,
     )
 
-    if exact_labels:
-        return history, metrics, exact_metrics
-
-    return history, metrics
+    return train_out, deep_model
 
 
 def cg_loss_vs_nsamples(config_ising, config_train, keep_list, datafile, logdir):
@@ -108,7 +105,7 @@ def cg_loss_vs_nsamples(config_ising, config_train, keep_list, datafile, logdir)
             cg_level_end=2,
             exact=True,
         )
-        history, metrics, exact_metrics = training_loop(
+        history, metrics, exact_metrics, _ = training_loop(
             config_ising,
             config_train,
             datasets,
@@ -158,22 +155,43 @@ def compute_iac(model_group, config_ising, plotpath):
 
 
 def compare_observables(
-    model_group, config_ising, datafile, num_samples, num_chains, batch_size, skip
+    model_group,
+    config_ising,
+    datafile,
+    num_samples,
+    num_chains,
+    batch_size,
+    skip,
+    logdir,
 ):
 
     cgL = int(config_ising["L"] / config_ising["cg_factor"])
 
     obs_model = mcmc.Observables(
-        model_group.ediff.predict, cgL, num_samples, num_chains, 5000, batch_size, skip
+        lambda data: model_group.ediff.predict_on_batch(data).numpy(),
+        cgL,
+        num_samples,
+        num_chains,
+        50 * skip,
+        batch_size,
+        skip,
+        logdir,
     )
     obs_model.metrop_par(batch_size)
     print()
     print("Samples generated using learned model")
-    obs_model.print_observables()
-    print()
+    observed = obs_model.save_observables()
+    print(observed)
 
     obs_samples = mcmc.Observables(
-        model_group.ediff.predict, cgL, num_samples, num_chains, 5000, batch_size, skip
+        lambda data: None,
+        cgL,
+        num_samples,
+        num_chains,
+        50 * skip,
+        batch_size,
+        skip,
+        logdir,
     )
     with h5py.File(datafile, "r") as dset:
         group = "/".join(
@@ -185,8 +203,8 @@ def compare_observables(
         obs_samples.num_recorded = len(dset[group]["images"])
     print()
     print("Samples generated with Swendsen-Wang")
-    obs_samples.print_observables()
-    print()
+    observed = obs_samples.save_observables()
+    print(observed)
 
 
 def main():
@@ -196,10 +214,10 @@ def main():
         "keep_data": 1.0,
         "train_split": 9.0 / 10.0,
         "val_split": 1.0 / 9.0,
-        "batch_size": 2500,  # Should use one GPU's worth of memory efficiently
+        "batch_size": 10000,  # Should use one GPU's worth of memory efficiently
         "nepochs": 1000,
-        "patience": 100,
-        "verbosity": 0,
+        "patience": 20,
+        "verbosity": 2,
         "conv_activation": "log_cosh",
         "dense_activation": "elu",
         "kernel_size": 3,
@@ -208,22 +226,29 @@ def main():
     }
     today = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     logdir = os.path.join("logs", today)
-
     datapath = os.path.join(os.curdir, "data")
-    # Make datasets
-    datafile = os.path.join(
-        datapath, "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"])
-    )
-    cg_ref_file = os.path.join(
-        datapath,
-        "L{0:d}b{1:.4e}_cgdeci2.h5".format(
-            int(config_ising["L"] / config_ising["cg_factor"]), config_ising["beta"]
-        ),
-    )
-    data.create_cg_dataset(config_ising, datafile, 0, 2, cg_ref_file=cg_ref_file)
 
-    keep_list = np.power(10.0, np.linspace(-3.0, 0.0, num=40))
-    cg_loss_vs_nsamples(config_ising, config_train, keep_list, datafile, logdir)
+    for L, skip in [(4, 10), (8, 100)]:
+        start = time.perf_counter()
+        start_cpu = time.process_time()
+        config_ising["L"] = L
+        datafile = os.path.join(
+            datapath,
+            "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"]),
+        )
+        logdir_L = os.path.join(logdir, str(L))
+        model = run(config_ising, config_train, datafile, logdir_L)[1]
+        interm = time.perf_counter()
+        interm_cpu = time.process_time()
+        print("Training time:")
+        print("Elapsed time:", interm - start)
+        print("CPU time:", interm_cpu - start_cpu)
+        compare_observables(
+            model, config_ising, datafile, int(1e6), 10000, 1000, skip, logdir_L
+        )
+        print("MCMC time:")
+        print("Elapsed time:", time.perf_counter() - interm)
+        print("CPU time:", time.process_time() - interm_cpu)
 
 
 if __name__ == "__main__":
