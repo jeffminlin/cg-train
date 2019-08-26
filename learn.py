@@ -51,7 +51,16 @@ def training_loop(
     print("Number of devices: {}".format(strategy.num_replicas_in_sync))
     config_train["batch_size"] *= strategy.num_replicas_in_sync
     with strategy.scope():
-        deep_model = models.ModelGroup(config_ising, config_train)
+        deep_model = models.ModelGroup(
+            config_ising,
+            config_train,
+            energy=models.conv_multiply(
+                config_train["nfilters"],
+                config_train["kernel_size"],
+                config_train["dense_nodes"],
+                config_train["dense_activation"],
+            ),
+        )
         optimizer_adam = tf.keras.optimizers.Adam()
         deep_model.ediff.compile(loss="mse", optimizer=optimizer_adam)
 
@@ -179,18 +188,11 @@ def compare_observables(
     obs_model.metrop_par(batch_size)
     print()
     print("Samples generated using learned model")
-    logfile = os.path.join(logdir, "deep_model_obs.json")
-    observed = obs_model.save_observables(logfile)
+    observed = obs_model.save_observables(logdir, "deep_model_obs.json")
     print(observed)
 
     obs_samples = mcmc.Observables(
-        lambda data: None,
-        cgL,
-        num_samples,
-        num_chains,
-        50 * skip,
-        batch_size,
-        skip,
+        lambda data: None, cgL, num_samples, num_chains, 5 * skip, batch_size, skip
     )
     with h5py.File(datafile, "r") as dset:
         group = "/".join(
@@ -202,8 +204,7 @@ def compare_observables(
         obs_samples.num_recorded = len(dset[group]["images"])
     print()
     print("Samples generated with Swendsen-Wang")
-    logfile = os.path.join(logdir, "sw_obs.json")
-    observed = obs_samples.save_observables(logfile)
+    observed = obs_samples.save_observables(logdir, "sw_obs.json")
     print(observed)
 
 
@@ -214,10 +215,10 @@ def main():
         "keep_data": 1.0,
         "train_split": 9.0 / 10.0,
         "val_split": 1.0 / 9.0,
-        "batch_size": 10000,  # Should use one GPU's worth of memory efficiently
+        "batch_size": 25000,  # Should use one GPU's worth of memory efficiently
         "nepochs": 1000,
         "patience": 20,
-        "verbosity": 2,
+        "verbosity": 1,
         "conv_activation": "log_cosh",
         "dense_activation": "elu",
         "kernel_size": 3,
@@ -228,7 +229,7 @@ def main():
     logdir = os.path.join("logs", today)
     datapath = os.path.join(os.curdir, "data")
 
-    for L, skip in [(4, 10), (8, 100)]:
+    for L, skip in [(4, 10), (8, 100), (16, 1000)]:
         start = time.perf_counter()
         start_cpu = time.process_time()
         config_ising["L"] = L
@@ -236,7 +237,7 @@ def main():
             datapath,
             "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"]),
         )
-        logdir_L = os.path.join(logdir, str(L))
+        logdir_L = os.path.join(logdir, "L" + str(L))
         model = run(config_ising, config_train, datafile, logdir_L)[1]
         interm = time.perf_counter()
         interm_cpu = time.process_time()
@@ -244,7 +245,7 @@ def main():
         print("Elapsed time:", interm - start)
         print("CPU time:", interm_cpu - start_cpu)
         compare_observables(
-            model, config_ising, datafile, int(1e6), 10000, 1000, skip, logdir_L
+            model, config_ising, datafile, int(1e6), 25000, 1000, skip, logdir_L
         )
         print("MCMC time:")
         print("Elapsed time:", time.perf_counter() - interm)
