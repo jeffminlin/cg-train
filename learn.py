@@ -23,7 +23,9 @@ def run(config_ising, config_train, datafile, logdir, cg_ref_file=None):
     print("Train configuration:", config_train)
 
     # Make datasets
-    data.create_cg_dataset(config_ising, datafile, 0, 3, cg_ref_file=cg_ref_file)
+    data.create_cg_dataset(
+        config_ising, datafile, 0, 3, overwrite=True, cg_ref_file=cg_ref_file
+    )
     if cg_ref_file:
         datasets, labels, exact_labels = data.load_datasets(
             datafile,
@@ -66,16 +68,7 @@ def training_loop(
     print("Number of devices: {}".format(strategy.num_replicas_in_sync))
     config_train["batch_size"] *= strategy.num_replicas_in_sync
     with strategy.scope():
-        deep_model = models.ModelGroup(
-            config_ising,
-            config_train,
-            energy=models.conv_multiply(
-                config_train["nfilters"],
-                config_train["kernel_size"],
-                config_train["dense_nodes"],
-                config_train["dense_activation"],
-            ),
-        )
+        deep_model = models.ModelGroup(config_ising, config_train)
         optimizer_adam = tf.keras.optimizers.Adam()
         deep_model.ediff.compile(loss="mse", optimizer=optimizer_adam)
 
@@ -250,7 +243,7 @@ def main():
         datapath, "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"])
     )
 
-    for L, skip in [(8, 100)]:
+    for L, skip in [(4, 10)]:
         start = time.perf_counter()
         start_cpu = time.process_time()
         config_ising["L"] = L
@@ -258,40 +251,46 @@ def main():
             datapath,
             "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"]),
         )
+        cg_ref_file = os.path.join(
+            datapath,
+            "L{0:d}b{1:.4e}_cgmaj2.h5".format(config_ising["L"], config_ising["beta"]),
+        )
         logdir_L = os.path.join(logdir, "L" + str(L))
-        # model = run(config_ising, config_train, datafile, logdir_L)[1]
-        model_group = models.ModelGroup(
-            config_ising,
-            config_train,
-            energy=models.conv_multiply(
-                config_train["nfilters"],
-                config_train["kernel_size"],
-                config_train["dense_nodes"],
-                config_train["dense_activation"],
-            ),
-        )
-        model_group.ediff.compile(optimizer="sgd", loss="mse")
-        model_group.ediff.load_weights(
-            os.path.join(
-                os.curdir, "logs", "20190827-095115", "L8", "sgd", "weights.h5"
-            )
-        )
-        model = model_group.energy
+        model = run(
+            config_ising, config_train, datafile, logdir_L, cg_ref_file=cg_ref_file
+        )[1]
+        # model_group = models.ModelGroup(
+        #     config_ising,
+        #     config_train,
+        #     energy=models.conv_multiply(
+        #         config_train["nfilters"],
+        #         config_train["kernel_size"],
+        #         config_train["dense_nodes"],
+        #         config_train["dense_activation"],
+        #     ),
+        # )
+        # model_group.ediff.compile(optimizer="sgd", loss="mse")
+        # model_group.ediff.load_weights(
+        #     os.path.join(
+        #         os.curdir, "logs", "20190827-095115", "L8", "sgd", "weights.h5"
+        #     )
+        # )
+        # model = model_group.energy
         interm = time.perf_counter()
         interm_cpu = time.process_time()
         print("Loading time for model:")
         print("Elapsed time:", interm - start)
         print("CPU time:", interm_cpu - start_cpu)
-        # compare_observables(
-        #     model, config_ising, datafile, int(1e6), 25000, 1000, skip, logdir_L
-        # )
-        compute_iac(
-            model_group,
-            config_ising,
-            os.path.join(
-                os.curdir, "logs", "20190827-095115", "L8", "autocorrelation.png"
-            ),
+        compare_observables(
+            model, config_ising, datafile, int(1e6), 25000, 1000, skip, logdir_L
         )
+        # compute_iac(
+        #     model_group,
+        #     config_ising,
+        #     os.path.join(
+        #         os.curdir, "logs", "20190827-095115", "L8", "autocorrelation.png"
+        #     ),
+        # )
         print("MCMC time:")
         print("Elapsed time:", time.perf_counter() - interm)
         print("CPU time:", time.process_time() - interm_cpu)

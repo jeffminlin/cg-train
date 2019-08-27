@@ -34,11 +34,7 @@ def load_datasets(
             if cg_level == 0:
                 images = dset["images"][:]
                 imagesets, exp_ediffs = coarse_grain(
-                    config_ising["L"],
-                    config_ising["beta"],
-                    cg_method,
-                    1,
-                    images,
+                    config_ising["L"], config_ising["beta"], cg_method, 1, images
                 )
                 images = imagesets[0]
                 images_flipped = imagesets[1]
@@ -282,7 +278,7 @@ def cg_ediff(L, beta, cg_method, cgf, image, flipidx):
                 image[shift_flipidx(L, flipidx, np.array([[blkshift], [shift]]))]
                 * image[shift_flipidx(L, flipidx, np.array([[blkshift - 1], [shift]]))]
                 + image[shift_flipidx(L, flipidx, np.array([[shift], [blkshift]]))]
-                * image[shift_flipidx(L, flipidx, np.array([[shift - 1], [blkshift]]))]
+                * image[shift_flipidx(L, flipidx, np.array([[shift], [blkshift - 1]]))]
                 for blkshift in [0, cgf]
                 for shift in range(cgf)
             ],
@@ -366,3 +362,81 @@ def h5py_create_catch(dset, grouplist, name, data, id, dtype=None, overwrite=Tru
                 pass
             group.create_dataset(name, data=data, dtype=dtype)
             group.create_dataset(name + "_date", data=id)
+
+
+def nearest_neighbor(image):
+
+    return np.sum(
+        0.5
+        * (
+            image * np.roll(image, 1, axis=0)
+            + image * np.roll(image, -1, axis=0)
+            + image * np.roll(image, 1, axis=1)
+            + image * np.roll(image, -1, axis=1)
+        )
+    )
+
+
+def block_maj_kernel(block, spin):
+
+    if spin * np.sum(block) > 0:
+        return 1
+    elif spin * np.sum(block) == 0:
+        return 0.5
+    else:
+        return 0
+
+
+def maj_kernel(image, cg_image):
+
+    kernel = 1
+    L = image.shape[1]
+    cgL = cg_image.shape[1]
+    for cgidx_i in range(cgL):
+        for cgidx_j in range(cgL):
+            kernel *= block_maj_kernel(
+                image[cgidx_i * L : (cgidx_i + 1) * L, cgidx_j * L : (cgidx_j + 1) * L],
+                cg_image[cgidx_i, cgidx_j],
+            )
+
+    return kernel
+
+
+def exact_cg_hamiltonian(beta, cg_image, cg_factor, kernel):
+
+    cgL = cg_image.shape[1]
+    L = cgL * cg_factor
+    exp_energy_sum = 0
+
+    # Brute force compute all configurations
+    for config in range(2 ** (L * L)):
+        image = np.array([int(spin) for spin in np.binary_repr(config).zfill(L * L)])
+        ss_zero_idx = image == 0
+        image[ss_zero_idx] = -1
+        exp_energy_sum += kernel(image.reshape((L, L)), cg_image) * np.exp(
+            -beta * nearest_neighbor(image.reshape((L, L)))
+        )
+
+    return -np.log(exp_energy_sum)
+
+
+def save_cg_hamiltonians(L, beta, cg_factor, kernel, cg_ref_file):
+
+    cgL = int(L / cg_factor)
+    cgimage_list = []
+    energy_list = []
+    for cg_config in range(2 ** (cgL * cgL)):
+        cgimage = np.array(
+            [int(spin) for spin in np.binary_repr(cg_config).zfill(cgL * cgL)]
+        )
+        ss_zero_idx = cgimage == 0
+        cgimage[ss_zero_idx] = -1
+        print(cgimage)
+        cgimage_list.append(cgimage)
+        energy_list.append(
+            exact_cg_hamiltonian(beta, cgimage.reshape((cgL, cgL)), cg_factor, kernel)
+        )
+
+    with h5py.File(cg_ref_file, "w") as cgref_dset:
+        cgref_dset.create_dataset("images", data=np.array(cgimage_list))
+        cgref_dset.create_dataset("energies", data=np.array(energy_list))

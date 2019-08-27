@@ -229,6 +229,7 @@ def compute_exact_cg_metrics(
 
         noise = labels[key] - exact_labels[key]
         metrics[key]["noise_var"] = float(np.var(noise))
+        metrics[key]["noise_avg"] = float(np.average(noise))
 
     with open_or_create(logdir, "metrics_exact.json", "w") as outfile:
         json.dump(metrics, outfile, indent=4)
