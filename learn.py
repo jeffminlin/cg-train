@@ -253,7 +253,7 @@ def main():
         )
         cg_ref_file = os.path.join(
             datapath,
-            "L{0:d}b{1:.4e}_cgmaj2.h5".format(config_ising["L"], config_ising["beta"]),
+            "L{0:d}b{1:.4e}_cgmaj2.h5".format(2, config_ising["beta"]),
         )
         logdir_L = os.path.join(logdir, "L" + str(L))
         model = run(
