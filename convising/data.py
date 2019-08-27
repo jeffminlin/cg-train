@@ -20,19 +20,27 @@ def load_datasets(
     outdata = {}
     labels = {}
 
+    with h5py.File(datafile, "r") as dset:
+        images = dset["images"]
+        num_samples = int(len(images) * config_train["keep_data"])
+        idx = np.arange(num_samples)
+        if shuffle:
+            np.random.shuffle(idx)
+
     for cg_level in range(cg_level_start, cg_level_end + 1):
         outdata[cg_level] = {}
 
         with h5py.File(datafile, "r") as dset:
             if cg_level == 0:
-                images = dset["images"]
+                images = dset["images"][:]
                 imagesets, exp_ediffs = coarse_grain(
                     config_ising["L"],
                     config_ising["beta"],
                     cg_method,
-                    cg_factor,
+                    1,
                     images,
                 )
+                images = imagesets[0]
                 images_flipped = imagesets[1]
             else:
                 group = str(cg_level) + "/" + cg_method + "/" + str(cg_factor)
@@ -40,9 +48,6 @@ def load_datasets(
                 images_flipped = dset[group]["images_flipped"][:, :, :]
 
             num_samples = int(len(images) * config_train["keep_data"])
-            idx = np.arange(num_samples)
-            if shuffle:
-                np.random.shuffle(idx)
             imagedata = split_train_val_test(images, config_train, idx)
             imagedata_flipped = split_train_val_test(images_flipped, config_train, idx)
 
@@ -112,19 +117,22 @@ def create_cg_dataset(
             imagearray = dset[cgpath]["images"][:, :]
 
         no_overwrite_persist = True
+        date = None
         for flipidx in range(cg_level_end - cg_level_start):
             curlevel = cg_level_start + flipidx + 1
             cgL = int(L / ((cg_factor) ** (cg_level_start + flipidx)))
             print("Coarse graining from", cgL, "to", int(cgL / cg_factor))
 
             grouplist = [str(curlevel), cg_method, str(cg_factor)]
-            exists_check = check_group_datasets(dset, grouplist, curlevel, cg_ref_file)
+            exists_check, date = check_group_datasets(
+                dset, grouplist, curlevel, cg_ref_file, date=date
+            )
             no_overwrite = exists_check and not overwrite
 
             # If at any level you need to overwrite, then you must overwrite for all
             # coarser-grained levels
             no_overwrite = no_overwrite and no_overwrite_persist
-            overwrite_persist = no_overwrite
+            no_overwrite_persist = no_overwrite
 
             if no_overwrite:
                 print("Datasets exist and times of creation match, not overwriting")
@@ -170,11 +178,13 @@ def create_cg_dataset(
                 imagearray = cg_images[0]
 
 
-def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None):
+def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None, date=None):
 
     if "/".join(grouplist) not in dset:
-        return False
-        
+        return False, -1
+    if date == -1:
+        return False, -1
+
     exists_check = True
     ids = []
     images_exists = h5py_exists(dset, grouplist, "images")
@@ -195,11 +205,20 @@ def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None):
                 ids.append(dset["/".join(grouplist)]["images_flipped_date"][()])
             exists_check = exists_check and exp_cg_ediffs_exists
 
-    if exists_check:
+    if exists_check and not date:
         id_check = len(set(ids)) == 1
         exists_check = exists_check and id_check
+        date_out = date
+    elif exists_check and date:
+        id_check = len(set(ids)) == 1
+        id_check = id_check and ids[0] == date
+        exists_check = exists_check and id_check
+        date_out = date
 
-    return exists_check
+    if not exists_check:
+        date = -1
+
+    return exists_check, date
 
 
 def compute_exact_cg(config_ising, dset, cg_ref_file):
