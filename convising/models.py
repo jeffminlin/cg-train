@@ -68,6 +68,49 @@ def deep_conv_e(conv_activation, nfilters, kernel_size, dense_nodes, dense_activ
     return model_energy
 
 
+def conv_multiply(nfilters, kernel_size, dense_nodes, dense_activation):
+
+    M_in = tf.keras.layers.Input(shape=(None, None))
+    M_pad = lys.PeriodicPad2D(name="periodic_pad", pad_size=kernel_size - 1)(M_in)
+    M_conv1 = tf.keras.layers.Conv2D(
+        nfilters,
+        [kernel_size, kernel_size],
+        strides=(1, 1),
+        activation="linear",
+        padding="valid",
+        use_bias=False,
+        name="convolution_1",
+    )(M_pad)
+    M_conv2 = tf.keras.layers.Conv2D(
+        nfilters,
+        [kernel_size, kernel_size],
+        strides=(1, 1),
+        activation="linear",
+        padding="valid",
+        use_bias=False,
+        name="convolution",
+    )(M_pad)
+    M_mult = tf.keras.layers.Multiply()([M_conv1, M_conv2])
+    M_fc = M_mult
+    for idx, nodenum in enumerate(dense_nodes):
+        M_fc = tf.keras.layers.Dense(
+            nodenum,
+            activation=dense_activation,
+            use_bias=False,
+            name="dense_" + str(idx),
+        )(M_fc)
+    M_sum = tf.keras.layers.Lambda(
+        lambda x: tf.math.reduce_sum(x, axis=[1, 2]), name="sum_over_spins"
+    )(M_fc)
+    M_lincomb = tf.keras.layers.Dense(
+        1, activation="linear", use_bias=False, name="combine_basis"
+    )(M_sum)
+    model_energy = tf.keras.Model(inputs=M_in, outputs=M_lincomb, name="deep_energy")
+
+    return model_energy
+    
+
+
 def linear_basis():
 
     M_in = tf.keras.layers.Input(shape=(None, None))

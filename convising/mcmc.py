@@ -264,7 +264,7 @@ class Observables:
 
         return avgs, variances, num_tot
 
-    def save_observables(self, logfile):
+    def save_observables(self, logdir, filename):
         observed = {}
 
         observed["nsamples"] = self.num_recorded
@@ -277,7 +277,7 @@ class Observables:
                 "std err (biased)": np.sqrt(self.variances[idx] / self.num_recorded),
             }
 
-        with open_or_create(logfile, "w") as outfile:
+        with open_or_create(logdir, filename, "w") as outfile:
             json.dump(observed, outfile, indent=4)
 
         return observed

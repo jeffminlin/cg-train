@@ -118,12 +118,17 @@ def train_and_save(
     return history, metrics
 
 
-def connected_two_pt_correlation(first_samples, second_samples):
+def connected_two_pt_correlation(samples_first, samples_second):
 
-    average_first = np.average(first_samples, axis=0).reshape(1, -1)
-    average_second = np.average(second_samples, axis=0).reshape(1, -1)
-    M = np.matmul(first_samples.transpose(), second_samples) / second_samples.shape[0]
-    M = M - np.matmul(average_first.transpose(), average_second)
+    average_first = np.average(samples_first, axis=0).reshape(1, -1)
+    average_second = np.average(samples_second, axis=0).reshape(1, -1)
+    M = (
+        np.matmul(
+            samples_first.transpose() - average_first.transpose(),
+            samples_second - average_second,
+        )
+        / samples_first.shape[0]
+    )
 
     return M
 
@@ -166,12 +171,12 @@ def compute_rg_metrics(
     )
     nn = {}
     nn["fine"] = nn_basis.predict(
-        datasets[cg_level_start]["test"],
+        datasets[cg_level_start]["test"][0],
         batch_size=config_train["batch_size"],
         verbose=config_train["verbosity"],
     )
     nn["coarse"] = nn_basis.predict(
-        datasets[cg_level_end]["test"],
+        datasets[cg_level_end]["test"][0],
         batch_size=config_train["batch_size"],
         verbose=config_train["verbosity"],
     )
@@ -189,11 +194,11 @@ def compute_rg_metrics(
     metrics["d<S_(n+1)>/dK_n"] = Mcf.tolist()
 
     J = np.linalg.lstsq(Mcc, Mcf, rcond=None)[0]
-    J_eigs, _ = np.linalg.eig(J)
+    J_eigs = np.linalg.eigvals(J)
     J_eigs.sort()
     criticalexp = np.log(config_ising["cg_factor"]) / np.log(np.real(J_eigs)[-1])
     metrics["condition_number_of_d<S_(n+1)>/dK_(n+1)"] = float(cc_cond)
-    metrics["jacobian, "] = J.tolist()
+    metrics["jacobian"] = J.tolist()
     metrics["jacobian_eigs"] = [str(i) for i in J_eigs.tolist()]
     metrics["critical_exp"] = float(criticalexp)
 
