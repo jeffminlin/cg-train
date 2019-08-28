@@ -392,10 +392,14 @@ def maj_kernel(image, cg_image):
     kernel = 1
     L = image.shape[1]
     cgL = cg_image.shape[1]
+    cgf = int(L / cgL)
     for cgidx_i in range(cgL):
         for cgidx_j in range(cgL):
             kernel *= block_maj_kernel(
-                image[cgidx_i * L : (cgidx_i + 1) * L, cgidx_j * L : (cgidx_j + 1) * L],
+                image[
+                    cgidx_i * cgf : (cgidx_i + 1) * cgf,
+                    cgidx_j * cgf : (cgidx_j + 1) * cgf,
+                ],
                 cg_image[cgidx_i, cgidx_j],
             )
 

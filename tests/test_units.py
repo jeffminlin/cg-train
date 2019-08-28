@@ -50,11 +50,19 @@ def test_cg_maj_e():
              [ 1, -1,  1,  1],
              [-1, -1,  1, -1],
              [-1, -1, -1, -1]],
+            [[-1,  1,  1,  1],
+             [-1, -1,  1, -1],
+             [-1, -1,  1, -1],
+             [-1, -1, -1, -1]],
+            [[-1,  1, -1,  1],
+             [-1, -1,  1, -1],
+             [ 1,  1,  1, -1],
+             [-1, -1, -1, -1]],
             [[-1, -1, -1, -1], [-1, -1, -1, -1], [-1, -1, -1, -1], [-1, -1, -1, -1]],
         ]
     )
     test_cg, test_ediffs = data.coarse_grain(4, 0.5, "maj", 2, test_images)
-    true_ediffs = np.exp(-0.5 * np.array([16, 0, 16]))
+    true_ediffs = np.exp(-0.5 * np.array([16, 0, 4, -8, 16]))
 
     np.testing.assert_allclose(true_ediffs, test_ediffs)
 

@@ -68,7 +68,16 @@ def training_loop(
     print("Number of devices: {}".format(strategy.num_replicas_in_sync))
     config_train["batch_size"] *= strategy.num_replicas_in_sync
     with strategy.scope():
-        deep_model = models.ModelGroup(config_ising, config_train)
+        deep_model = models.ModelGroup(
+            config_ising,
+            config_train,
+            energy=models.conv_multiply(
+                config_train["nfilters"],
+                config_train["kernel_size"],
+                config_train["dense_nodes"],
+                config_train["dense_activation"],
+            ),
+        )
         optimizer_adam = tf.keras.optimizers.Adam()
         deep_model.ediff.compile(loss="mse", optimizer=optimizer_adam)
 
@@ -243,7 +252,7 @@ def main():
         datapath, "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"])
     )
 
-    for L, skip in [(4, 10)]:
+    for L, skip in [(8, 100)]:
         start = time.perf_counter()
         start_cpu = time.process_time()
         config_ising["L"] = L
@@ -252,13 +261,10 @@ def main():
             "L{0:d}b{1:.4e}.h5".format(config_ising["L"], config_ising["beta"]),
         )
         cg_ref_file = os.path.join(
-            datapath,
-            "L{0:d}b{1:.4e}_cgmaj2.h5".format(2, config_ising["beta"]),
+            datapath, "L{0:d}b{1:.4e}_cgmaj2.h5".format(2, config_ising["beta"])
         )
         logdir_L = os.path.join(logdir, "L" + str(L))
-        model = run(
-            config_ising, config_train, datafile, logdir_L, cg_ref_file=cg_ref_file
-        )[1]
+        model = run(config_ising, config_train, datafile, logdir_L, cg_ref_file=None)[1]
         # model_group = models.ModelGroup(
         #     config_ising,
         #     config_train,
