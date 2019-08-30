@@ -1,4 +1,5 @@
-# Swendsen-Wang sampling of 2D Ising model
+# Swendsen-Wang sampling of 2D Ising model by Lin Lin and Jeffmin Lin
+# Requires Julia 0.7
 # Revision: 10/30/2018
 
 include("mcmc_ising.jl")

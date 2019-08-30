@@ -1,5 +1,7 @@
 # ConvIsing
-This is a package for learning the coarse-grained Hamiltonian on the simplest nearest-neighbor classical Ising model, and using repeated renormalizations to estimate the critical exponent. It requires Ising samples to have already been generated (some example Julia code included).
+This repository contains an API for learning the coarse-grained Hamiltonian on the simplest nearest-neighbor classical Ising model, and using repeated renormalizations to estimate the critical exponent. It requires Ising samples to have already been generated (some example Julia code included). Examples of how to use the API are in `learn.py`.
+
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ## Features
 Current feature list:
