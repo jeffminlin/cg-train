@@ -105,7 +105,7 @@ def conv_multiply(nfilters, kernel_size, dense_nodes, dense_activation):
     M_lincomb = tf.keras.layers.Dense(
         1, activation="linear", use_bias=False, name="combine_basis"
     )(M_sum)
-    model_energy = tf.keras.Model(inputs=M_in, outputs=M_lincomb, name="deep_energy")
+    model_energy = tf.keras.Model(inputs=M_in, outputs=M_lincomb, name="conv_multiply")
 
     return model_energy
     
