@@ -15,6 +15,7 @@ def load_datasets(
     exact=False,
 ):
 
+    L = config_ising["L"]
     cg_method = config_ising["cg_method"]
     cg_factor = config_ising["cg_factor"]
     outdata = {}
@@ -32,22 +33,21 @@ def load_datasets(
 
         with h5py.File(datafile, "r") as dset:
             if cg_level == 0:
-                images = dset["images"][:]
-                imagesets, exp_ediffs = coarse_grain(
-                    config_ising["L"], config_ising["beta"], cg_method, 1, images
-                )
-                images = imagesets[0]
-                images_flipped = imagesets[1]
+                images = dset["images"][:, :].reshape((-1, L, L))
             else:
                 group = str(cg_level) + "/" + cg_method + "/" + str(cg_factor)
                 images = dset[group]["images"][:, :, :]
-                images_flipped = dset[group]["images_flipped"][:, :, :]
 
             num_samples = int(len(images) * config_train["keep_data"])
             imagedata = split_train_val_test(images, config_train, idx)
-            imagedata_flipped = split_train_val_test(images_flipped, config_train, idx)
+            for key in imagedata:
+                outdata[cg_level][key] = [imagedata[key].astype(np.float64)]
 
             if cg_level == 1:
+                images_flipped = dset[group]["images_flipped"][:, :, :]
+                imagedata_flipped = split_train_val_test(
+                    images_flipped, config_train, idx
+                )
                 exp_ediffs = dset[group]["exp_ediffs"][:]
                 labels = split_train_val_test(exp_ediffs, config_train, idx)
                 if exact:
@@ -56,11 +56,11 @@ def load_datasets(
                         exp_cg_ediffs, config_train, idx
                     )
 
-        for key in imagedata:  # Concatentate data
-            outdata[cg_level][key] = [
-                imagedata[key].astype(np.float64),
-                imagedata_flipped[key].astype(np.float64),
-            ]
+                for key in imagedata:  # Concatentate data
+                    outdata[cg_level][key] = [
+                        imagedata[key].astype(np.float64),
+                        imagedata_flipped[key].astype(np.float64),
+                    ]
 
     if exact:
         return outdata, labels, exact_labels
@@ -110,7 +110,9 @@ def create_cg_dataset(
             imagearray = dset["images"][:, :]
         else:
             cgpath = "/".join([str(cg_level_start), cg_method, str(cg_factor)])
-            imagearray = dset[cgpath]["images"][:, :]
+            imagearray = dset[cgpath]["images"][:, :, :]
+
+        today_hash = hash(datetime.datetime.now())
 
         no_overwrite_persist = True
         date = None
@@ -138,7 +140,6 @@ def create_cg_dataset(
                 cg_images, exp_ediffs = coarse_grain(
                     cgL, beta, cg_method, cg_factor, imagearray
                 )
-                today_hash = hash(datetime.datetime.now())
                 h5py_create_catch(
                     dset,
                     grouplist,
@@ -147,15 +148,15 @@ def create_cg_dataset(
                     id=today_hash,
                     dtype="i1",
                 )
-                h5py_create_catch(
-                    dset,
-                    grouplist,
-                    "images_flipped",
-                    data=cg_images[1],
-                    id=today_hash,
-                    dtype="i1",
-                )
                 if curlevel == 1:
+                    h5py_create_catch(
+                        dset,
+                        grouplist,
+                        "images_flipped",
+                        data=cg_images[1],
+                        id=today_hash,
+                        dtype="i1",
+                    )
                     h5py_create_catch(
                         dset, grouplist, "exp_ediffs", data=exp_ediffs, id=today_hash
                     )
@@ -186,11 +187,12 @@ def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None, date=None)
     images_exists = h5py_exists(dset, grouplist, "images")
     if images_exists:
         ids.append(dset["/".join(grouplist)]["images_date"][()])
-    images_flipped_exists = h5py_exists(dset, grouplist, "images_flipped")
-    if images_flipped_exists:
-        ids.append(dset["/".join(grouplist)]["images_flipped_date"][()])
-    exists_check = exists_check and images_exists and images_flipped_exists
+    exists_check = exists_check and images_exists
     if curlevel == 1:
+        images_flipped_exists = h5py_exists(dset, grouplist, "images_flipped")
+        if images_flipped_exists:
+            ids.append(dset["/".join(grouplist)]["images_flipped_date"][()])
+        exists_check = exists_check and images_flipped_exists
         exp_ediffs_exists = h5py_exists(dset, grouplist, "exp_ediffs")
         if exp_ediffs_exists:
             ids.append(dset["/".join(grouplist)]["exp_ediffs_date"][()])
@@ -198,13 +200,16 @@ def check_group_datasets(dset, grouplist, curlevel, cg_ref_file=None, date=None)
         if cg_ref_file:
             exp_cg_ediffs_exists = h5py_exists(dset, grouplist, "exp_cg_ediffs")
             if images_flipped_exists:
-                ids.append(dset["/".join(grouplist)]["images_flipped_date"][()])
+                ids.append(dset["/".join(grouplist)]["exp_cg_ediffs_date"][()])
             exists_check = exists_check and exp_cg_ediffs_exists
 
     if exists_check and not date:
         id_check = len(set(ids)) == 1
         exists_check = exists_check and id_check
-        date_out = date
+        if id_check:
+            date_out = ids[0]
+        else:
+            date_out = -1
     elif exists_check and date:
         id_check = len(set(ids)) == 1
         id_check = id_check and ids[0] == date
@@ -224,9 +229,9 @@ def compute_exact_cg(config_ising, dset, cg_ref_file):
     cg_method = config_ising["cg_method"]
     cg_factor = config_ising["cg_factor"]
 
-    cg_path = "1/" + cg_method + "/" + str(cg_factor) + "/"
-    cgimage = dset[cg_path + "images"][:, :, :]
-    cgimageflip = dset[cg_path + "images_flipped"][:, :, :]
+    cg_path = "/".join(["1", cg_method, str(cg_factor)])
+    cgimage = dset[cg_path]["images"][:, :, :]
+    cgimageflip = dset[cg_path]["images_flipped"][:, :, :]
 
     with h5py.File(cg_ref_file, "r") as cgref_dset:
         cgref_ss = cgref_dset["images"][:, :]
@@ -294,7 +299,7 @@ def cg_imageflip(L, cg_method, cgf, image, cgflipidx):
 
     numdat = len(image)
     # Decimate
-    cgimage = image[:, 0::cgf, 0::cgf]
+    cgimage = np.copy(image[:, 0::cgf, 0::cgf])
 
     # If majority rule, replace cgimage elements with the sign of the sum of blocks
     if cg_method == "maj":
@@ -380,14 +385,22 @@ def nearest_neighbor(image):
 def block_maj_kernel(block, spin):
 
     if spin * np.sum(block) > 0:
-        return 1
+        return 1.0
     elif spin * np.sum(block) == 0:
         return 0.5
     else:
-        return 0
+        return 0.0
 
 
-def maj_kernel(image, cg_image):
+def block_deci_kernel(block, spin):
+
+    if block[0, 0] == spin:
+        return 1.0
+    else:
+        return 0.0
+
+
+def lattice_kernel(image, cg_image, block_kernel):
 
     kernel = 1
     L = image.shape[1]
@@ -395,7 +408,7 @@ def maj_kernel(image, cg_image):
     cgf = int(L / cgL)
     for cgidx_i in range(cgL):
         for cgidx_j in range(cgL):
-            kernel *= block_maj_kernel(
+            kernel *= block_kernel(
                 image[
                     cgidx_i * cgf : (cgidx_i + 1) * cgf,
                     cgidx_j * cgf : (cgidx_j + 1) * cgf,
@@ -406,7 +419,7 @@ def maj_kernel(image, cg_image):
     return kernel
 
 
-def exact_cg_hamiltonian(beta, cg_image, cg_factor, kernel):
+def exact_cg_hamiltonian(beta, cg_image, cg_factor, block_kernel):
 
     cgL = cg_image.shape[1]
     L = cgL * cg_factor
@@ -417,14 +430,14 @@ def exact_cg_hamiltonian(beta, cg_image, cg_factor, kernel):
         image = np.array([int(spin) for spin in np.binary_repr(config).zfill(L * L)])
         ss_zero_idx = image == 0
         image[ss_zero_idx] = -1
-        exp_energy_sum += kernel(image.reshape((L, L)), cg_image) * np.exp(
-            -beta * nearest_neighbor(image.reshape((L, L)))
-        )
+        exp_energy_sum += lattice_kernel(
+            image.reshape((L, L)), cg_image, block_kernel
+        ) * np.exp(beta * nearest_neighbor(image.reshape((L, L))))
 
     return -np.log(exp_energy_sum)
 
 
-def save_cg_hamiltonians(L, beta, cg_factor, kernel, cg_ref_file):
+def save_cg_hamiltonians(L, beta, cg_factor, block_kernel, cg_ref_file):
 
     cgL = int(L / cg_factor)
     cgimage_list = []
@@ -438,8 +451,13 @@ def save_cg_hamiltonians(L, beta, cg_factor, kernel, cg_ref_file):
         print(cgimage)
         cgimage_list.append(cgimage)
         energy_list.append(
-            exact_cg_hamiltonian(beta, cgimage.reshape((cgL, cgL)), cg_factor, kernel)
+            exact_cg_hamiltonian(
+                beta, cgimage.reshape((cgL, cgL)), cg_factor, block_kernel
+            )
         )
+
+    print(np.array(cgimage_list))
+    print(np.array(energy_list))
 
     with h5py.File(cg_ref_file, "w") as cgref_dset:
         cgref_dset.create_dataset("images", data=np.array(cgimage_list))

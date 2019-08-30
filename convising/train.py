@@ -118,19 +118,18 @@ def train_and_save(
     return history, metrics
 
 
+def two_pt_correlation(samples_first, samples_second):
+
+    return np.matmul(samples_first.transpose(), samples_second) / samples_first.shape[0]
+
+
 def connected_two_pt_correlation(samples_first, samples_second):
 
     average_first = np.average(samples_first, axis=0).reshape(1, -1)
     average_second = np.average(samples_second, axis=0).reshape(1, -1)
-    M = (
-        np.matmul(
-            samples_first.transpose() - average_first.transpose(),
-            samples_second - average_second,
-        )
-        / samples_first.shape[0]
+    return two_pt_correlation(samples_first, samples_second) - np.matmul(
+        average_first.transpose(), average_second
     )
-
-    return M
 
 
 def compute_rg_metrics(
@@ -226,10 +225,17 @@ def compute_exact_cg_metrics(
                 verbose=config_train["verbosity"],
             )
         )
+        model_pred = model_group.ediff.predict(
+            datasets[1][key],
+            batch_size=config_train["batch_size"],
+            verbose=config_train["verbosity"],
+        ).ravel()
 
         noise = labels[key] - exact_labels[key]
         metrics[key]["noise_var"] = float(np.var(noise))
-        metrics[key]["noise_avg"] = float(np.average(noise))
+        metrics[key]["<r(x,y), f(x) - tilde(f)(x,theta)>"] = (
+            np.dot(noise, exact_labels[key].ravel() - model_pred) / noise.shape[0]
+        )
 
     with open_or_create(logdir, "metrics_exact.json", "w") as outfile:
         json.dump(metrics, outfile, indent=4)
